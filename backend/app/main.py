@@ -1,6 +1,7 @@
 """olive-msystem FastAPI application."""
 from __future__ import annotations
 
+import logging
 import shutil
 import uvicorn
 import yaml
@@ -43,16 +44,39 @@ app.add_middleware(
 store = Store(DB_PATH)
 runner = Runner(store, workers=1)
 grader = OliveAnalyzer()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("olive-msystem")
 
 
 def _seed_admin() -> None:
-    """Create a default admin account on first startup (env-configurable)."""
+    """Ensure an admin account exists with a safe password.
+
+    * First startup: creates "admin" with a random 10-digit numeric password
+      (override via ADMIN_USERNAME / ADMIN_PASSWORD env).
+    * If the admin account still uses the documented default "admin123",
+      it is rotated once to a random numeric password.
+    * If ADMIN_PASSWORD is set, the admin password is left untouched.
+
+    A generated password is logged once at startup so it can be retrieved.
+    """
     import os
-    if store.get_user_by_username("admin"):
+    import secrets
+    if os.environ.get("ADMIN_PASSWORD"):
+        logger.info("admin password managed via ADMIN_PASSWORD env (not randomized)")
         return
     username = os.environ.get("ADMIN_USERNAME", "admin")
-    password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    store.create_user(username, password, role="admin", display_name="管理者")
+    existing = store.get_user_by_username(username)
+    if existing is not None and existing["role"] != "admin":
+        return
+    password = "".join(secrets.choice("0123456789") for _ in range(10))
+    if existing is None:
+        store.create_user(username, password, role="admin", display_name="管理者")
+    else:
+        if not verify_password("admin123", existing["password_hash"]):
+            return
+        store.set_user_password(existing["id"], password)
+        logger.info("Rotated admin '%s' away from the default password admin123", username)
+    logger.info("Created default admin account: username=%s password=%s", username, password)
 
 
 _seed_admin()

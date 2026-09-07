@@ -147,12 +147,6 @@ export default function LoginPage() {
               {busy ? '処理中…' : mode === 'login' ? 'ログイン' : '登録する'}
             </button>
           </form>
-
-          {mode === 'login' && (
-            <p className="mt-4 text-center text-[11px] text-neutral-400">
-              管理者: admin / admin123（初期アカウント）
-            </p>
-          )}
         </div>
       </div>
     </div>
