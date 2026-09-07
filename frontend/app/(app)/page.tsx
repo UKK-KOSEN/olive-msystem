@@ -81,6 +81,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [obsByVideo, setObsByVideo] = useState<Record<number, Observation[]>>({});
+  const [obsErrors, setObsErrors] = useState<Record<number, string>>({});
   const [running, setRunning] = useState<number | null>(null);
   const [timeSpec, setTimeSpec] = useState<Record<number, string>>({});
   const [soilInputs, setSoilInputs] = useState<Record<number, SoilMoistureInput | undefined>>({});
@@ -98,8 +99,14 @@ export default function Dashboard() {
   }, []);
 
   const loadObs = useCallback(async (videoId: number) => {
-    const obs = await api.observations(videoId).catch(() => [] as Observation[]);
-    setObsByVideo((prev) => ({ ...prev, [videoId]: obs }));
+    try {
+      const obs = await api.observations(videoId);
+      setObsByVideo((prev) => ({ ...prev, [videoId]: obs }));
+      setObsErrors((prev) => { const n = { ...prev }; delete n[videoId]; return n; });
+    } catch (e: any) {
+      setObsByVideo((prev) => ({ ...prev, [videoId]: [] }));
+      setObsErrors((prev) => ({ ...prev, [videoId]: e?.message || '解析結果の取得に失敗しました' }));
+    }
   }, []);
 
   useEffect(() => {
@@ -713,7 +720,7 @@ export default function Dashboard() {
                       onSoilChange={(val) => setSoilInputs((prev) => ({ ...prev, [v.id]: val }))}
                     />
                     <div className="mt-4">
-                      <ObservationTable obs={obsByVideo[v.id] || []} />
+                      <ObservationTable obs={obsByVideo[v.id] || []} error={obsErrors[v.id]} />
                     </div>
                   </div>
                 )}
@@ -1023,8 +1030,16 @@ function AnalyseControls({
   );
 }
 
-function ObservationTable({ obs }: { obs: Observation[] }) {
+function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }) {
   const [expanded, setExpanded] = useState<number | null>(null);
+
+  if (error) {
+    return (
+      <p className="rounded-md bg-health-danger/10 px-3 py-2 text-sm text-health-danger">
+        {error}
+      </p>
+    );
+  }
 
   if (obs.length === 0) {
     return (

@@ -23,7 +23,7 @@ from .analyzer import OliveAnalyzer, parse_time
 from .translate_report import explain_detection_ja
 from .config import STORAGE_DIR
 from .health import health_state
-from .soil_moisture import build_soil_data, integrate as integrate_soil
+from .soil_moisture import build_soil_data, integrate as integrate_soil, parse_observed_at_iso
 from .storage import Store
 
 log = logging.getLogger("olive-msystem.runner")
@@ -136,19 +136,21 @@ class Runner:
         tree_id = job.get("tree_id")
         source = f"video#{job['video_id']}" + (f":{tree_id}" if tree_id else "")
         try:
-            soil_data = build_soil_data(job.get("soil_manual"))
             results = grader.analyze_video_at_times(
                 str(video_path), job["times"], str(out_dir), source,
                 drone_mode=False,
             )
             saved = 0
             total = len(job["times"]) or 1
+            manual = job.get("soil_manual")
             for idx, rec in enumerate(results, start=1):
                 job["progress"] = min(0.95, idx / total)
                 if not rec.get("ok"):
                     continue
                 rec["tree_id"] = tree_id
                 rec["observed_at"] = _frame_observed_at(video, rec)
+                target_dt = parse_observed_at_iso(rec.get("observed_at"))
+                soil_data = build_soil_data(manual, target_time=target_dt)
                 integrate_soil(rec, soil_data)
                 rec["soil_source"] = soil_data.get("source", "none")
                 rec["health_state"] = health_state(rec)

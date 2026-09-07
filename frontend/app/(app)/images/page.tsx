@@ -41,6 +41,7 @@ export default function ImageAnalysisPage() {
   const [confirmRemove, setConfirmRemove] = useState<ImageAsset | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | ImageAsset['status']>('all');
 
   const statusOrder: { key: 'all' | ImageAsset['status']; label: string }[] = [
@@ -67,8 +68,13 @@ export default function ImageAnalysisPage() {
   }, [runProgress]);
 
   const load = useCallback(async () => {
-    const imgs = await api.images().catch(() => [] as ImageAsset[]);
-    setImages(imgs);
+    setLoadError(null);
+    try {
+      const imgs = await api.images();
+      setImages(imgs);
+    } catch (e: any) {
+      setLoadError(e?.message || '画像データの取得に失敗しました');
+    }
   }, []);
 
   useEffect(() => {
@@ -178,6 +184,12 @@ export default function ImageAnalysisPage() {
           </p>
         )}
       </section>
+
+      {loadError && (
+        <div className="mb-6 rounded-lg bg-health-danger/10 px-4 py-3 text-sm text-health-danger">
+          {loadError}
+        </div>
+      )}
 
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

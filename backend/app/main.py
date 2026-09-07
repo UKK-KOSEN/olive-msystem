@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import traceback
 import uvicorn
 import yaml
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Optional
 
 from fastapi import Body, FastAPI, File, UploadFile, HTTPException, Query, Depends, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .analyzer import OliveAnalyzer, parse_time
 from .captured import extract_captured_at, parse_captured_candidate
@@ -26,7 +27,7 @@ from .models import (AnalyseImageRequest, AnalyseTimesRequest,
                      RegisterRequest, LoginRequest, FarmerUpdateRequest,
                      PasswordResetRequest)
 from .runner import Runner
-from .soil_moisture import build_soil_data, integrate as integrate_soil
+from .soil_moisture import build_soil_data, integrate as integrate_soil, parse_observed_at_iso
 from .storage import Store, verify_password
 
 ensure_dirs()
@@ -85,6 +86,15 @@ _seed_admin()
 # --------------------------------------------------------------------------
 # Health / metadata
 # --------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):
+    logger.error("unhandled error on %s: %s", request.url.path, traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "サーバー内部でエラーが発生しました"},
+    )
+
+
 @app.get("/api/health")
 def api_health():
     counts = store.count()
@@ -490,7 +500,9 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
     rec["tree_id"] = req.tree_id
     # Timestamp the observation at the capture time, not the analysis time.
     rec["observed_at"] = image.get("recorded_at") or image.get("created_at") or rec.get("observed_at")
-    soil_data = build_soil_data(req.soil_moisture.dict() if req.soil_moisture else None)
+    target_dt = parse_observed_at_iso(rec.get("observed_at"))
+    soil_data = build_soil_data(req.soil_moisture.dict() if req.soil_moisture else None,
+                                target_time=target_dt)
     integrate_soil(rec, soil_data)
     rec["soil_source"] = soil_data.get("source", "none")
     rec["health_state"] = health_state(rec)
@@ -518,7 +530,16 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
 @app.get("/api/soil-moisture/status")
 def soil_moisture_status():
     """Report whether automatic soil moisture is available and the latest value."""
-    data = build_soil_data(None)
+    try:
+        data = build_soil_data(None)
+    except Exception as exc:
+        return {
+            "source": "error",
+            "configured": bool(SOIL_MOISTURE_CONFIG_PATH.exists()),
+            "soil_moisture": {},
+            "health": {},
+            "error": str(exc),
+        }
     return {
         "source": data.get("source", "none"),
         "configured": bool(SOIL_MOISTURE_CONFIG_PATH.exists()),
@@ -860,13 +881,23 @@ def admin_put_settings(payload: dict = Body(...), _: dict = Depends(require_admi
 @app.post("/api/admin/soil-config/test")
 def admin_test_soil(_: dict = Depends(require_admin)):
     from .soil_moisture import build_soil_data
-    data = build_soil_data(None)
-    return {
-        "source": data.get("source", "none"),
-        "soil_moisture": data.get("soil_moisture", {}),
-        "health": data.get("health", {}),
-        "configured": SOIL_MOISTURE_CONFIG_PATH.exists(),
-    }
+    try:
+        data = build_soil_data(None)
+        return {
+            "source": data.get("source", "none"),
+            "soil_moisture": data.get("soil_moisture", {}),
+            "health": data.get("health", {}),
+            "configured": SOIL_MOISTURE_CONFIG_PATH.exists(),
+            "error": None,
+        }
+    except Exception as exc:
+        return {
+            "source": "error",
+            "soil_moisture": {},
+            "health": {},
+            "configured": SOIL_MOISTURE_CONFIG_PATH.exists(),
+            "error": str(exc),
+        }
 
 
 @app.put("/api/admin/soil-config")

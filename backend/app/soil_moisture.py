@@ -25,12 +25,30 @@ olive-p src.runtime.integrate_soil_moisture()::
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
 from .config import OLIVE_P_DIR, SOIL_MOISTURE_CONFIG_PATH
+
+
+def parse_observed_at_iso(observed_at: Optional[str]) -> Optional[datetime]:
+    """Parse ISO *observed_at* string to a naive local-time datetime.
+
+    This is needed by ``get_moisture_at_time`` which expects a naive
+    ``datetime`` in the local timezone.
+    """
+    if not observed_at:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(observed_at).replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt
+    except (ValueError, TypeError):
+        return None
 
 
 def _import_olive_soil():
@@ -52,13 +70,17 @@ def _health_of_client(sm, data: dict) -> dict:
         return {"risk": "unknown", "message": "土壌水分データなし", "weight": 0.0, "score": 0.5}
 
 
-def build_soil_data(manual: Optional[dict]) -> dict:
+def build_soil_data(manual: Optional[dict],
+                    target_time: Optional[datetime] = None) -> dict:
     """Return a soil_data dict (auto-fetch, falling back to manual values).
 
     Args:
         manual: Optional operator-supplied readings:
             {sensor1_moisture_percent, sensor2_moisture_percent,
              temperature, humidity, measured_at}
+        target_time: When provided, the soil moisture reading *closest* to
+            this timestamp is used instead of the latest value.  This is
+            the capture time of the video frame / image being analysed.
     """
     sm = _import_olive_soil()
     config = SOIL_MOISTURE_CONFIG_PATH
@@ -68,9 +90,11 @@ def build_soil_data(manual: Optional[dict]) -> dict:
         try:
             raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
             client = sm.SoilMoistureClient(raw)
-            latest = client.get_latest()
-            if latest:
-                data = latest
+            if target_time is not None:
+                data = client.get_moisture_at_time(target_time)
+            else:
+                data = client.get_latest()
+            if data:
                 auto_ok = True
         except Exception:
             data = None
