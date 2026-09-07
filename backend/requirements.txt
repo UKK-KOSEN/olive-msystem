@@ -1,0 +1,7 @@
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+python-multipart>=0.0.9,<1
+pydantic>=2,<3
+numpy>=1.23,<3
+opencv-python-headless>=5.0.0.93,<6
+PyYAML>=6,<7

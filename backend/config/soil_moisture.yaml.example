@@ -1,0 +1,18 @@
+# ===========================================================================
+# Soil moisture API configuration (optional)
+# ===========================================================================
+# Copy this file to `soil_moisture.yaml` and fill in your credentials to
+# enable automatic soil-moisture fetching from the UKK-KOSEN Cloudflare D1
+# API. If this config file is absent, olive-msystem falls back to manual
+# entry of sensor readings on the analysis screens.
+#
+#   api_base_url:  e.g.  https://xxxx.workers.dev
+#   api_key:       your X-Sensor-Api-Key (optional)
+#   default_kit_id: the kit/sensor-group identifier
+#   cache_ttl:     seconds to cache API responses (default 60)
+
+api_base_url: ""
+api_key: ""
+default_kit_id: "default"
+timeout: 10
+cache_ttl: 60

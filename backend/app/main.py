@@ -1,0 +1,1040 @@
+"""olive-msystem FastAPI application."""
+from __future__ import annotations
+
+import shutil
+import uvicorn
+import yaml
+from pathlib import Path
+from typing import Optional
+
+from fastapi import Body, FastAPI, File, UploadFile, HTTPException, Query, Depends, Form, Header
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
+
+from .analyzer import OliveAnalyzer, parse_time
+from .captured import extract_captured_at, parse_captured_candidate
+from .translate_report import explain_detection_ja
+from .auth import get_current_user, require_admin
+from .config import (CORS_ORIGINS, DB_PATH, MAX_UPLOAD_MB, PORT,
+                     SETTINGS_PATH, SOIL_MOISTURE_CONFIG_PATH,
+                     STORAGE_DIR, UPLOAD_DIR, ensure_dirs,
+                     load_settings, save_settings)
+from .health import HEALTH_LABELS, health_state, aggregate_health_state
+from .models import (AnalyseImageRequest, AnalyseTimesRequest,
+                     AnalyseTimesTextRequest, SoilMoistureInput,
+                     RegisterRequest, LoginRequest, FarmerUpdateRequest,
+                     PasswordResetRequest)
+from .runner import Runner
+from .soil_moisture import build_soil_data, integrate as integrate_soil
+from .storage import Store, verify_password
+
+ensure_dirs()
+
+app = FastAPI(title="olive-msystem", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+store = Store(DB_PATH)
+runner = Runner(store, workers=1)
+grader = OliveAnalyzer()
+
+
+def _seed_admin() -> None:
+    """Create a default admin account on first startup (env-configurable)."""
+    import os
+    if store.get_user_by_username("admin"):
+        return
+    username = os.environ.get("ADMIN_USERNAME", "admin")
+    password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    store.create_user(username, password, role="admin", display_name="管理者")
+
+
+_seed_admin()
+
+
+# --------------------------------------------------------------------------
+# Health / metadata
+# --------------------------------------------------------------------------
+@app.get("/api/health")
+def api_health():
+    counts = store.count()
+    return {"status": "ok", **counts}
+
+
+@app.get("/api/versions")
+def api_versions():
+    """Report the versions of the software stack used by this dashboard."""
+    import sys
+    import platform
+
+    import cv2
+    import numpy
+    import fastapi
+    import uvicorn
+    import pydantic
+
+    def pkg(name: str):
+        try:
+            import importlib.metadata as md
+            return md.version(name)
+        except Exception:
+            return None
+
+    olive_p_version = None
+    for p in [Path(r"../olive-p/VERSION"),
+              Path(r"C:\Users\yakit\Downloads\olive-p\VERSION")]:
+        try:
+            if p.exists():
+                olive_p_version = p.read_text(encoding="utf-8").strip()
+                break
+        except Exception:
+            pass
+
+    return {
+        "olive_msystem": {
+            "frontend": "1.0.0",
+            "backend": "1.0.0",
+        },
+        "olive_p": olive_p_version,
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "dependencies": {
+            "fastapi": fastapi.__version__,
+            "uvicorn": uvicorn.__version__,
+            "pydantic": pydantic.__version__,
+            "opencv": cv2.__version__,
+            "numpy": numpy.__version__,
+            "yaml": pkg("PyYAML"),
+        },
+    }
+
+
+# --------------------------------------------------------------------------
+# Auth & registration
+# --------------------------------------------------------------------------
+@app.post("/api/auth/register")
+def register(req: RegisterRequest):
+    """Self-registration for farmers. Creates a farmer account."""
+    username = req.username.strip()
+    user = store.create_user(
+        username,
+        req.password,
+        role="farmer",
+        display_name=(req.display_name or "").strip() or None,
+        farm_name=(req.farm_name or "").strip() or None,
+    )
+    if user is None:
+        raise HTTPException(409, "このユーザー名は既に使われています")
+    token = store.create_session(user["id"])
+    return {"token": token, "user": user}
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    user = store.get_user_by_username(req.username.strip())
+    if user is None or not verify_password(req.password, user["password_hash"]):
+        raise HTTPException(401, "ユーザー名またはパスワードが正しくありません")
+    if not user.get("is_active"):
+        raise HTTPException(403, "このアカウントは無効です")
+    token = store.create_session(user["id"])
+    public_user = {k: user.get(k) for k in (
+        "id", "username", "role", "display_name", "farm_name",
+        "farm_area", "farm_trees", "farm_variety", "farm_location", "farm_contact",
+    )}
+    return {"token": token, "user": public_user}
+
+
+@app.post("/api/auth/logout")
+def logout(authorization: str = Header(default="")):
+    token = ""
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if token:
+        store.delete_session(token)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def me(user: dict = Depends(get_current_user)):
+    return user
+
+
+@app.put("/api/auth/profile")
+def update_profile(req: dict, user: dict = Depends(get_current_user)):
+    """Update the current user's profile (account, farm info, password, preferences)."""
+    fields = {}
+    if "display_name" in req:
+        fields["display_name"] = str(req["display_name"]).strip() or None
+    if "farm_name" in req:
+        fields["farm_name"] = str(req["farm_name"]).strip() or None
+    for key in ("farm_area", "farm_variety", "farm_location", "farm_contact"):
+        if key in req:
+            fields[key] = str(req[key] or "").strip() or None
+    if "farm_trees" in req:
+        v = req["farm_trees"]
+        if v in (None, "", 0):
+            fields["farm_trees"] = None
+        else:
+            try:
+                fields["farm_trees"] = int(v)
+                if fields["farm_trees"] < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise HTTPException(400, "farm_trees must be a non-negative integer")
+    if fields:
+        store.update_user(user["id"], **fields)
+    if req.get("password"):
+        if len(str(req["password"])) < 6:
+            raise HTTPException(400, "password must be at least 6 characters")
+        store.set_user_password(user["id"], str(req["password"]))
+    # Handle preferences
+    if "preferences" in req and isinstance(req["preferences"], dict):
+        store.update_preferences(user["id"], req["preferences"])
+    updated = store.get_user(user["id"])
+    if updated:
+        updated.pop("password_hash", None)
+        updated["preferences"] = store.get_preferences(user["id"])
+    return updated or user
+
+
+@app.get("/api/auth/preferences")
+def get_preferences(user: dict = Depends(get_current_user)):
+    """Get the current user's preferences."""
+    return store.get_preferences(user["id"])
+
+
+@app.put("/api/auth/preferences")
+def update_preferences(req: dict, user: dict = Depends(get_current_user)):
+    """Update the current user's preferences."""
+    result = store.update_preferences(user["id"], req)
+    return result
+
+
+@app.get("/api/calendar/observations")
+def calendar_observations(
+    year: int = None,
+    month: int = None,
+    farmer_id: Optional[int] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Get observations grouped by date for calendar view.
+
+    If year/month not specified, returns all observations.
+    Admin sees all (or a specific farmer); farmers see only their own
+    (or all if can_see_others is set).
+    """
+    from datetime import datetime
+    now = datetime.now()
+    y = year or now.year
+    m = month or now.month
+
+    # Get observations for the month
+    start = f"{y:04d}-{m:02d}-01"
+    if m == 12:
+        end = f"{y+1:04d}-01-01"
+    else:
+        end = f"{y:04d}-{m+1:02d}-01"
+
+    con = store._connect()
+    try:
+        if user["role"] == "admin":
+            rows = con.execute(
+                "SELECT id, user_id, observed_at, result_json, leaf_count, fruit_count, "
+                "overall_health_score, source, label "
+                "FROM observations WHERE observed_at >= ? AND observed_at < ? "
+                "AND ( ? IS NULL OR user_id = ? ) "
+                "ORDER BY observed_at ASC",
+                (start, end, farmer_id, farmer_id),
+            ).fetchall()
+        else:
+            # Check if farmer can see others
+            prefs = store.get_preferences(user["id"])
+            if prefs.get("can_see_others", False):
+                rows = con.execute(
+                    "SELECT id, user_id, observed_at, result_json, leaf_count, fruit_count, "
+                    "overall_health_score, source, label "
+                    "FROM observations WHERE observed_at >= ? AND observed_at < ? "
+                    "AND ( ? IS NULL OR user_id = ? ) "
+                    "ORDER BY observed_at ASC",
+                    (start, end, farmer_id, farmer_id),
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    "SELECT id, user_id, observed_at, result_json, leaf_count, fruit_count, "
+                    "overall_health_score, source, label "
+                    "FROM observations WHERE observed_at >= ? AND observed_at < ? AND user_id = ? "
+                    "ORDER BY observed_at ASC",
+                    (start, end, user["id"]),
+                ).fetchall()
+
+        # Group by date
+        by_date = {}
+        import json
+        users_map = {u["id"]: u for u in store.list_users()}
+        for r in rows:
+            d = r["observed_at"][:10]  # YYYY-MM-DD
+            result = {}
+            if r["result_json"]:
+                try:
+                    result = json.loads(r["result_json"])
+                except Exception:
+                    result = {}
+            hs = health_state(result)
+            u = users_map.get(r["user_id"]) or {}
+            entry = {
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "observed_at": r["observed_at"],
+                "health_state": hs,
+                "leaf_count": r["leaf_count"],
+                "fruit_count": r["fruit_count"],
+                "overall_health_score": r["overall_health_score"],
+                "source": r["source"],
+                "label": r["label"],
+                "farm_name": u.get("farm_name") or u.get("display_name") or u.get("username") or "",
+            }
+            by_date.setdefault(d, []).append(entry)
+
+        return {"year": y, "month": m, "observations": by_date}
+    finally:
+        con.close()
+
+
+# --------------------------------------------------------------------------
+# Video upload (continuous upload support)
+# --------------------------------------------------------------------------
+@app.post("/api/videos")
+async def upload_video(file: UploadFile = File(...),
+                       captured_at: Optional[str] = Form(None),
+                       user: dict = Depends(get_current_user)):
+    """Upload a video file. Returns the video id and duration (if parseable).
+
+    ``captured_at`` (ISO or epoch-ms) is the time the video was recorded, sent
+    by the frontend from the file's metadata; it is used as the observation
+    timestamp instead of the analysis time.
+    """
+    if not file.filename:
+        raise HTTPException(400, "no filename")
+    if file.filename.lower().split(".")[-1] not in {"mp4", "avi", "mov", "mkv", "webm", "m4v"}:
+        raise HTTPException(400, "unsupported video format")
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, "file too large")
+
+    safe_name = Path(file.filename).name
+    dest = UPLOAD_DIR / safe_name
+    counter = 1
+    while dest.exists():
+        dest = UPLOAD_DIR / f"{Path(file.filename).stem}_{counter}{dest.suffix}"
+        counter += 1
+    dest.write_bytes(content)
+
+    recorded_at = parse_captured_candidate(captured_at) or extract_captured_at(dest)
+    video_id = store.add_video(safe_name, str(dest), len(content), user_id=user["id"],
+                               recorded_at=recorded_at)
+    # Try to read metadata (duration etc.).
+    try:
+        info = grader.video_info(str(dest))
+        store.update_video(video_id, duration_sec=info["duration_seconds"],
+                           fps=info["fps"], width=info["width"], height=info["height"])
+    except Exception:
+        info = {}
+
+    return {"id": video_id, "filename": safe_name, "storage_path": str(dest),
+            "recorded_at": recorded_at, "info": info}
+
+
+@app.get("/api/videos")
+def list_videos(status: Optional[str] = Query(None), user: dict = Depends(get_current_user)):
+    uid = None if user["role"] == "admin" else user["id"]
+    videos = store.list_videos(status=status, user_id=uid)
+    for v in videos:
+        v["storage_path"] = "/" + str(Path(v["storage_path"]).as_posix())
+    return videos
+
+
+@app.get("/api/videos/jobs")
+def video_jobs(user: dict = Depends(get_current_user)):
+    """Return the current processing queue with progress for the running user."""
+    jobs = runner.jobs()
+    out = []
+    for j in jobs:
+        if user["role"] != "admin":
+            vid = store.get_video(j["video_id"])
+            if vid is None or vid.get("user_id") != user["id"]:
+                continue
+        out.append({
+            "job_id": j["job_id"],
+            "video_id": j["video_id"],
+            "status": j["status"],
+            "progress": j.get("progress", 0.0),
+            "requested": len(j.get("times") or []),
+            "error": j.get("error"),
+            "saved": (j.get("result") or {}) and (j.get("result") or {}).get("saved"),
+        })
+    return out
+
+
+# --------------------------------------------------------------------------
+# Image upload + single-image analysis
+# --------------------------------------------------------------------------
+@app.post("/api/images")
+async def upload_image(file: UploadFile = File(...),
+                       captured_at: Optional[str] = Form(None),
+                       user: dict = Depends(get_current_user)):
+    """Upload a still image for single-image analysis.
+
+    ``captured_at`` (ISO or epoch-ms) is the time the photo was taken; used as
+    the observation timestamp.
+    """
+    if not file.filename:
+        raise HTTPException(400, "no filename")
+    ext = file.filename.lower().rsplit(".", 1)[-1] if "." in file.filename else ""
+    if ext not in {"jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp"}:
+        raise HTTPException(400, "unsupported image format")
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, "file too large")
+
+    safe_name = Path(file.filename).name
+    dest = UPLOAD_DIR / safe_name
+    counter = 1
+    while dest.exists():
+        dest = UPLOAD_DIR / f"{Path(file.filename).stem}_{counter}{dest.suffix}"
+        counter += 1
+    dest.write_bytes(content)
+
+    recorded_at = parse_captured_candidate(captured_at) or extract_captured_at(dest)
+    image_id = store.add_image(safe_name, str(dest), len(content), user_id=user["id"],
+                               recorded_at=recorded_at)
+    return {"id": image_id, "filename": safe_name, "storage_path": str(dest),
+            "recorded_at": recorded_at}
+
+
+@app.get("/api/images")
+def list_images(user: dict = Depends(get_current_user)):
+    uid = None if user["role"] == "admin" else user["id"]
+    return store.list_images(user_id=uid)
+
+
+def _owned_image(image_id: int, user: dict) -> dict:
+    """Return the image if the current user may access it."""
+    image = store.get_image(image_id)
+    if image is None:
+        raise HTTPException(404, "image not found")
+    if user["role"] != "admin" and image.get("user_id") != user["id"]:
+        raise HTTPException(403, "この画像にはアクセスできません")
+    return image
+
+
+def _owned_video(video_id: int, user: dict) -> dict:
+    """Return the video if the current user may access it."""
+    video = store.get_video(video_id)
+    if video is None:
+        raise HTTPException(404, "video not found")
+    if user["role"] != "admin" and video.get("user_id") != user["id"]:
+        raise HTTPException(403, "この動画にはアクセスできません")
+    return video
+
+
+@app.post("/api/images/{image_id}/analyse")
+def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(get_current_user)):
+    """Analyse a single uploaded image (synchronous, single image)."""
+    image = _owned_image(image_id, user)
+    image_path = Path(image["storage_path"])
+    if not image_path.exists():
+        raise HTTPException(404, "image file missing")
+
+    store.update_image(image_id, status="processing")
+    out_dir = STORAGE_DIR / f"img_{image_id}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    source = f"image#{image_id}" + (f":{req.tree_id}" if req.tree_id else "")
+    try:
+        rec = grader.analyze_image_file(str(image_path), str(out_dir), source)
+    except Exception as exc:
+        store.update_image(image_id, status="error")
+        raise HTTPException(500, f"analysis failed: {exc}")
+
+    rec["tree_id"] = req.tree_id
+    # Timestamp the observation at the capture time, not the analysis time.
+    rec["observed_at"] = image.get("recorded_at") or image.get("created_at") or rec.get("observed_at")
+    soil_data = build_soil_data(req.soil_moisture.dict() if req.soil_moisture else None)
+    integrate_soil(rec, soil_data)
+    rec["soil_source"] = soil_data.get("source", "none")
+    rec["health_state"] = health_state(rec)
+    try:
+        rec["explain_text"] = explain_detection_ja(rec)
+    except Exception:
+        rec["explain_text"] = None
+    for key in ("_frame_raw", "_frame_annotated"):
+        if rec.get(key):
+            p = Path(rec[key]).resolve()
+            try:
+                rel = p.relative_to(STORAGE_DIR.resolve())
+            except ValueError:
+                rel = Path(p.name)
+            rec[key + "_url"] = f"/storage/{rel.as_posix()}"
+
+    store.add_observation("image", rec, image_id=image_id, user_id=user["id"])
+    store.update_image(image_id, status="done")
+    return {"observation": rec}
+
+
+# --------------------------------------------------------------------------
+# Soil moisture
+# --------------------------------------------------------------------------
+@app.get("/api/soil-moisture/status")
+def soil_moisture_status():
+    """Report whether automatic soil moisture is available and the latest value."""
+    data = build_soil_data(None)
+    return {
+        "source": data.get("source", "none"),
+        "configured": bool(SOIL_MOISTURE_CONFIG_PATH.exists()),
+        "soil_moisture": data.get("soil_moisture", {}),
+        "health": data.get("health", {}),
+    }
+
+
+# --------------------------------------------------------------------------
+# Time-specified analysis
+# --------------------------------------------------------------------------
+@app.post("/api/videos/{video_id}/analyse")
+def analyse_video(video_id: int, req: AnalyseTimesRequest, user: dict = Depends(get_current_user)):
+    """Analyse an uploaded video at the given timestamps (seconds)."""
+    return _enqueue(video_id, req.times, req.tree_id, req.soil_moisture, user)
+
+
+@app.post("/api/videos/{video_id}/analyse-times")
+def analyse_video_text(video_id: int, req: AnalyseTimesTextRequest, user: dict = Depends(get_current_user)):
+    """Analyse an uploaded video at the given human time strings."""
+    try:
+        times = [parse_time(t) for t in req.times]
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return _enqueue(video_id, times, req.tree_id, req.soil_moisture, user)
+
+
+def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
+             soil_moisture: Optional[SoilMoistureInput] = None,
+             user: dict = None):
+    _owned_video(video_id, user)
+    video = store.get_video(video_id)
+    if video["status"] == "processing":
+        raise HTTPException(409, "video is already being analysed")
+    if not times:
+        raise HTTPException(400, "no times given")
+    job = runner.enqueue(video_id, sorted(set(round(t, 3) for t in times)), tree_id,
+                         soil_manual=soil_moisture.dict() if soil_moisture else None)
+    return {"job": job}
+
+
+# --------------------------------------------------------------------------
+# Results
+# --------------------------------------------------------------------------
+def _finalize(rows: list[dict]) -> list[dict]:
+    """Attach computed health_state, owner (farmer) info, and explain text."""
+    owners = {u["id"]: u for u in store.list_users()}
+    for o in rows:
+        result = o.get("result") or {}
+        o["health_state"] = health_state(result)
+        uid = o.get("user_id")
+        u = owners.get(uid) if uid is not None else None
+        if u:
+            o["owner"] = {k: u.get(k) for k in ("id", "username", "display_name", "farm_name")}
+        else:
+            o["owner"] = None
+        # Convert storage file paths to web URLs (/storage/...)
+        for key in ("annotated_path", "raw_frame_path"):
+            p = o.get(key)
+            if p:
+                o[key] = _url_for_storage(p)
+        try:
+            o["explain_text"] = explain_detection_ja(result)
+        except Exception:
+            o["explain_text"] = None
+    return rows
+
+
+def _url_for_storage(path: str) -> str:
+    """Convert an absolute storage file path into a /storage/... web URL."""
+    try:
+        from .config import STORAGE_DIR
+        fp = Path(path).resolve()
+        sp = Path(STORAGE_DIR).resolve()
+        if fp.is_relative_to(sp):
+            rel = fp.relative_to(sp)
+            return "/" + rel.as_posix()
+    except Exception:
+        pass
+    return path
+
+
+@app.get("/api/videos/{video_id}/observations")
+def video_observations(video_id: int, user: dict = Depends(get_current_user)):
+    _owned_video(video_id, user)
+    return _finalize(store.list_observations(video_id=video_id, user_id=_scope_id(user)))
+
+
+@app.get("/api/images/{image_id}/observations")
+def image_observations(image_id: int, user: dict = Depends(get_current_user)):
+    _owned_image(image_id, user)
+    return _finalize(store.list_observations(image_id=image_id, user_id=_scope_id(user)))
+
+
+@app.get("/api/observations")
+def all_observations(source_type: Optional[str] = Query(None),
+                     limit: int = Query(200),
+                     farmer_id: Optional[int] = Query(None),
+                     from_date: Optional[str] = Query(None),
+                     to_date: Optional[str] = Query(None),
+                     user: dict = Depends(get_current_user)):
+    if user["role"] == "admin" and farmer_id is not None:
+        uid = farmer_id
+    else:
+        uid = _scope_id(user)
+    return _finalize(store.list_observations(source_type=source_type,
+                                             user_id=uid,
+                                             from_date=from_date,
+                                             to_date=to_date,
+                                             limit=limit))
+
+
+@app.delete("/api/observations")
+def delete_observations(ids: list[int] = Body(..., embed=True),
+                        user: dict = Depends(get_current_user)):
+    """Bulk delete observations by ids.
+
+    Non-admin users may only delete observations they own.
+    """
+    uid = _scope_id(user)
+    deleted = 0
+    not_found = 0
+    if len(ids) > 500:
+        raise HTTPException(400, "too many observations (max 500)")
+    for oid in ids:
+        if store.delete_observation_owned(oid, uid):
+            deleted += 1
+        else:
+            not_found += 1
+    return {"ok": True, "deleted": deleted, "not_found": not_found}
+
+
+@app.get("/api/observations/export")
+def export_observations(source_type: Optional[str] = Query(None),
+                        farmer_id: Optional[int] = Query(None),
+                        from_date: Optional[str] = Query(None),
+                        to_date: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    """Export observations as CSV (farmer-friendly columns)."""
+    import csv as csv_mod
+    import io as io_mod
+    if user["role"] == "admin" and farmer_id is not None:
+        uid = farmer_id
+    else:
+        uid = _scope_id(user)
+    rows = _finalize(store.list_observations(source_type=source_type,
+                                             user_id=uid,
+                                             from_date=from_date,
+                                             to_date=to_date,
+                                             limit=10000))
+
+    buf = io_mod.StringIO()
+    writer = csv_mod.writer(buf)
+    writer.writerow([
+        "id", "observed_at", "source", "state", "health_score",
+        "leaf_count", "fruit_count", "green_coverage", "water_stress",
+        "leaf_curl_index", "wrinkled_fruit_count", "farm",
+    ])
+    for o in rows:
+        hs = o.get("health_state") or {}
+        lbl = hs.get("label", "")
+        state_label = HEALTH_LABELS.get(lbl, {}).get("ja", lbl)
+        score = hs.get("score")
+        if score is None:
+            score = o.get("overall_health_score")
+        writer.writerow([
+            o.get("id"),
+            o.get("observed_at"),
+            o.get("source_type") or o.get("source") or "",
+            state_label,
+            f'{score:.3f}' if score is not None else "",
+            o.get("leaf_count") or "",
+            o.get("fruit_count") or "",
+            o.get("green_coverage") if o.get("green_coverage") is not None else "",
+            o.get("water_stress") if o.get("water_stress") is not None else "",
+            o.get("leaf_curl_index") if o.get("leaf_curl_index") is not None else "",
+            o.get("wrinkled_fruit_count") or "",
+            (o.get("owner") or {}).get("farm_name") or "",
+        ])
+    content = "\ufeff" + buf.getvalue()  # BOM for Excel UTF-8
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=observations.csv"},
+    )
+
+
+@app.delete("/api/videos/{video_id}")
+def delete_own_video(video_id: int, user: dict = Depends(get_current_user)):
+    """Delete the current user's own video (admin may delete any)."""
+    _owned_video(video_id, user)
+    path = store.delete_video(video_id)
+    if path is None:
+        raise HTTPException(404, "video not found")
+    folder = Path(path).parent if path else None
+    if folder and folder.is_dir():
+        shutil.rmtree(folder, ignore_errors=True)
+    return {"ok": True, "deleted_video": video_id}
+
+
+@app.delete("/api/images/{image_id}")
+def delete_own_image(image_id: int, user: dict = Depends(get_current_user)):
+    """Delete the current user's own image (admin may delete any)."""
+    _owned_image(image_id, user)
+    path = store.delete_image(image_id)
+    if path is None:
+        raise HTTPException(404, "image not found")
+    try:
+        p = Path(path)
+        if p.is_file():
+            p.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return {"ok": True, "deleted_image": image_id}
+
+
+@app.delete("/api/observations/{observation_id}")
+def delete_own_observation(observation_id: int, user: dict = Depends(get_current_user)):
+    """Delete the current user's own observation (admin may delete any)."""
+    uid = _scope_id(user)
+    ok = store.delete_observation_owned(observation_id, uid)
+    if not ok:
+        raise HTTPException(404, "observation not found")
+    return {"ok": True}
+
+
+def _scope_id(user: dict) -> Optional[int]:
+    """Return the user_id filter for a normal user; None (all) for admin."""
+    if user["role"] == "admin":
+        return None
+    return user["id"]
+
+
+# --------------------------------------------------------------------------
+# Static files (frames, annotations) + character SVGs
+# --------------------------------------------------------------------------
+@app.get("/storage/{folder}/{file_name}")
+def storage_file(folder: str, file_name: str):
+    path = (STORAGE_DIR / folder / file_name).resolve()
+    if not path.is_file():
+        raise HTTPException(404, "file not found")
+    return FileResponse(path)
+
+
+# --------------------------------------------------------------------------
+# Character health
+# --------------------------------------------------------------------------
+@app.get("/api/olive/status")
+def olive_status(user: dict = Depends(get_current_user)):
+    """Aggregate observations into a current state + per-state summaries.
+
+    ``current_state`` is computed from *all* observation data (one score per
+    media, recency-weighted) plus trend and recommended next actions.
+    """
+    obs = store.list_observations(limit=500, user_id=_scope_id(user))
+    latest = {}
+    for o in obs:
+        vid = o["video_id"]
+        if vid not in latest:
+            latest[vid] = o
+    # Latest observation overall (for display only).
+    current = latest[max(latest, key=lambda k: latest[k]["id"])] if latest else None
+    states = {
+        "happy": 0, "good": 0, "caution": 0, "danger": 0,
+    }
+    for o in obs:
+        st = health_state(o.get("result") or {})
+        label = st.get("label", "good")
+        states[label] = states.get(label, 0) + 1
+    payload = {
+        "states": states,
+        "total_observations": len(obs),
+        "latest": current,
+        "labels": HEALTH_LABELS,
+        "current_state": aggregate_health_state(obs),
+    }
+    if current:
+        payload["current_video"] = current.get("filename")
+        payload["current_timestamp"] = current.get("timestamp_sec")
+    return payload
+
+
+# --------------------------------------------------------------------------
+# Admin / system management
+# --------------------------------------------------------------------------
+def _mask_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 6:
+        return "*" * len(key)
+    return f"{key[:4]}{'*' * max(4, len(key) - 8)}{key[-4:]}"
+
+
+def _soil_doc() -> dict:
+    """Return soil config as a dict suitable for the admin editor (key masked)."""
+    cfg = {}
+    if SOIL_MOISTURE_CONFIG_PATH.exists():
+        try:
+            cfg = yaml.safe_load(SOIL_MOISTURE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        except Exception:
+            cfg = {}
+    masked = dict(cfg)
+    if cfg.get("api_key"):
+        masked["api_key"] = _mask_key(str(cfg["api_key"]))
+    return {
+        "configured": SOIL_MOISTURE_CONFIG_PATH.exists(),
+        "config": masked,
+        "path": str(SOIL_MOISTURE_CONFIG_PATH),
+    }
+
+
+@app.get("/api/admin/stats")
+def admin_stats(_: dict = Depends(require_admin)):
+    return {
+        "settings": load_settings(),
+        "soil": _soil_doc(),
+        "max_upload_mb": MAX_UPLOAD_MB,
+        "db": store.stats(),
+    }
+
+
+@app.get("/api/admin/settings")
+def admin_get_settings(_: dict = Depends(require_admin)):
+    return load_settings()
+
+
+@app.get("/api/settings")
+def public_get_settings():
+    """Public, read-only copy of site branding settings (no auth needed)."""
+    s = load_settings()
+    return {"site": s.get("site", {})}
+
+
+@app.put("/api/admin/settings")
+def admin_put_settings(payload: dict = Body(...), _: dict = Depends(require_admin)):
+    return save_settings(payload)
+
+
+@app.post("/api/admin/soil-config/test")
+def admin_test_soil(_: dict = Depends(require_admin)):
+    from .soil_moisture import build_soil_data
+    data = build_soil_data(None)
+    return {
+        "source": data.get("source", "none"),
+        "soil_moisture": data.get("soil_moisture", {}),
+        "health": data.get("health", {}),
+        "configured": SOIL_MOISTURE_CONFIG_PATH.exists(),
+    }
+
+
+@app.put("/api/admin/soil-config")
+def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_admin)):
+    """Save soil moisture config from the admin editor (api_key masked in
+    the response; if a masked key is sent back, keep the original)."""
+    cfg = dict(payload or {})
+    existing = {}
+    if SOIL_MOISTURE_CONFIG_PATH.exists():
+        try:
+            existing = yaml.safe_load(SOIL_MOISTURE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        except Exception:
+            existing = {}
+    new_key = cfg.get("api_key")
+    old_key = existing.get("api_key", "")
+    if new_key is None:
+        cfg["api_key"] = old_key
+    elif new_key == "":
+        cfg["api_key"] = ""
+    elif old_key and new_key == _mask_key(old_key):
+        cfg["api_key"] = old_key
+    elif isinstance(new_key, str) and new_key.startswith("****"):
+        cfg["api_key"] = old_key
+    SOIL_MOISTURE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SOIL_MOISTURE_CONFIG_PATH.write_text(
+        yaml.safe_dump(cfg, allow_unicode=True, default_flow_style=False),
+        encoding="utf-8")
+    return _soil_doc()
+
+
+@app.delete("/api/admin/videos/{video_id}")
+def admin_delete_video(video_id: int, _: dict = Depends(require_admin)):
+    path = store.delete_video(video_id)
+    if path is None:
+        raise HTTPException(404, "video not found")
+    folder = Path(path).parent if path else None
+    if folder and folder.is_dir():
+        shutil.rmtree(folder, ignore_errors=True)
+    return {"ok": True, "deleted_video": video_id}
+
+
+@app.delete("/api/admin/images/{image_id}")
+def admin_delete_image(image_id: int, _: dict = Depends(require_admin)):
+    path = store.delete_image(image_id)
+    if path is None:
+        raise HTTPException(404, "image not found")
+    try:
+        p = Path(path)
+        if p.is_file():
+            p.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return {"ok": True, "deleted_image": image_id}
+
+
+@app.delete("/api/admin/observations/{observation_id}")
+def admin_delete_observation(observation_id: int, _: dict = Depends(require_admin)):
+    ok = store.delete_observation(observation_id)
+    if not ok:
+        raise HTTPException(404, "observation not found")
+    return {"ok": True}
+
+
+@app.post("/api/admin/observations/clear")
+def admin_clear_observations(_: dict = Depends(require_admin)):
+    n = store.clear_observations()
+    return {"ok": True, "deleted": n}
+
+
+# --------------------------------------------------------------------------
+# Notifications
+# --------------------------------------------------------------------------
+@app.post("/api/notifications")
+def create_notification(req: dict, user: dict = Depends(require_admin)):
+    """Create a notification (admin only)."""
+    title = req.get("title", "").strip()
+    body = req.get("body", "").strip()
+    target_role = req.get("target_role", "all")
+    target_user_id = req.get("target_user_id")
+    if not title or not body:
+        raise HTTPException(400, "title and body are required")
+    nid = store.add_notification(title, body, user["id"], target_role, target_user_id)
+    return {"id": nid, "ok": True}
+
+
+@app.get("/api/notifications")
+def list_notifications(user: dict = Depends(get_current_user)):
+    """List notifications for the current user."""
+    notifs = store.list_notifications(user["id"], user["role"])
+    return notifs
+
+
+@app.get("/api/notifications/unread-count")
+def unread_count(user: dict = Depends(get_current_user)):
+    """Get count of unread notifications."""
+    count = store.count_unread_notifications(user["id"], user["role"])
+    return {"count": count}
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_read(notification_id: int, user: dict = Depends(get_current_user)):
+    """Mark a notification as read."""
+    store.mark_notification_read(notification_id, user["id"])
+    return {"ok": True}
+
+
+@app.delete("/api/notifications/{notification_id}")
+def delete_notification(notification_id: int, _: dict = Depends(require_admin)):
+    """Delete a notification (admin only)."""
+    store.delete_notification(notification_id)
+    return {"ok": True}
+
+
+# --------------------------------------------------------------------------
+# Farmer management (admin only)
+# --------------------------------------------------------------------------
+@app.get("/api/admin/farmers")
+def admin_list_farmers(_: dict = Depends(require_admin)):
+    """List all farmer accounts with data counts and health-state aggregates."""
+    farmers = [u for u in store.list_users() if u["role"] == "farmer"]
+    state_dist = {}
+    latest_at = {}
+    for o in store.list_observations(limit=1000000):
+        uid = o.get("user_id")
+        if uid is None:
+            continue
+        st = health_state(o.get("result") or {})
+        label = st.get("label", "good")
+        d = state_dist.setdefault(uid, {})
+        d[label] = d.get(label, 0) + 1
+        if uid not in latest_at:
+            latest_at[uid] = o.get("observed_at")
+    out = []
+    for f in farmers:
+        d = state_dist.get(f["id"], {})
+        out.append({
+            **f,
+            "video_count": store.count_videos(user_id=f["id"]),
+            "image_count": store.count_images(user_id=f["id"]),
+            "observation_count": store.count_observations(user_id=f["id"]),
+            "states": {k: d.get(k, 0) for k in ("happy", "good", "caution", "danger")},
+            "latest_observed_at": latest_at.get(f["id"]),
+        })
+    return out
+
+
+@app.put("/api/admin/farmers/{user_id}")
+def admin_update_farmer(user_id: int, req: FarmerUpdateRequest,
+                        _: dict = Depends(require_admin)):
+    user = store.get_user(user_id)
+    if user is None or user["role"] != "farmer":
+        raise HTTPException(404, "農家が見つかりません")
+    changes = {}
+    if req.display_name is not None:
+        changes["display_name"] = req.display_name.strip()
+    if req.farm_name is not None:
+        changes["farm_name"] = req.farm_name.strip()
+    for key in ("farm_area", "farm_variety", "farm_location", "farm_contact"):
+        val = getattr(req, key)
+        if val is not None:
+            changes[key] = str(val).strip()
+    if req.farm_trees is not None:
+        if req.farm_trees < 0:
+            raise HTTPException(400, "farm_trees must be a non-negative integer")
+        changes["farm_trees"] = req.farm_trees
+    if req.is_active is not None:
+        changes["is_active"] = 1 if req.is_active else 0
+    store.update_user(user_id, **changes)
+    return store.get_user(user_id)
+
+
+@app.put("/api/admin/farmers/{user_id}/password")
+def admin_reset_farmer_password(user_id: int, req: PasswordResetRequest,
+                                _: dict = Depends(require_admin)):
+    user = store.get_user(user_id)
+    if user is None or user["role"] != "farmer":
+        raise HTTPException(404, "農家が見つかりません")
+    store.set_user_password(user_id, req.new_password)
+    return {"ok": True, "username": user["username"]}
+
+
+@app.delete("/api/admin/farmers/{user_id}")
+def admin_delete_farmer(user_id: int, _: dict = Depends(require_admin)):
+    user = store.get_user(user_id)
+    if user is None or user["role"] != "farmer":
+        raise HTTPException(404, "農家が見つかりません")
+    removed = store.delete_user(user_id)
+    return {"ok": True, "removed": removed}
+
+
+# --------------------------------------------------------------------------
+# Entrypoint
+# --------------------------------------------------------------------------
+if __name__ == "__main__":
+    uvicorn.run("app.main:app", host="127.0.0.1", port=PORT, reload=False)

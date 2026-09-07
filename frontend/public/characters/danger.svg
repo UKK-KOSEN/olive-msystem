@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <radialGradient id="skin" cx="0.42" cy="0.4" r="0.95">
+      <stop offset="0%" stop-color="#83966a"/>
+      <stop offset="100%" stop-color="#54603d"/>
+    </radialGradient>
+    <linearGradient id="leafg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7d8d5f"/>
+      <stop offset="100%" stop-color="#495538"/>
+    </linearGradient>
+  </defs>
+  <!-- wilted drooping leaf -->
+  <ellipse cx="150" cy="52" rx="31" ry="13" fill="url(#leafg)" transform="rotate(-40 150 52)"/>
+  <line x1="150" y1="52" x2="132" y2="64" stroke="#2f3c20" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="96" y="36" width="8" height="24" rx="4" fill="#5f5130"/>
+  <!-- drooping body -->
+  <ellipse cx="100" cy="108" rx="60" ry="70" fill="url(#skin)"/>
+  <ellipse cx="85" cy="132" rx="24" ry="32" fill="#ffffff0d"/>
+  <!-- faint dehydrated wrinkle lines on cheeks -->
+  <path d="M 66 100 q 6 6 6 12" fill="none" stroke="#3f4a2d" stroke-width="1.6" opacity="0.5"/>
+  <path d="M 128 100 q -6 6 -6 12" fill="none" stroke="#3f4a2d" stroke-width="1.6" opacity="0.5"/>
+  <!-- heavy, half-closed tired eyes -->
+  <path d="M 66 86 Q 76 80 86 86" fill="none" stroke="#223018" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M 112 86 Q 122 80 132 86" fill="none" stroke="#223018" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- droopy mouth -->
+  <path d="M 90 120 Q 98 116 110 120" fill="none" stroke="#223018" stroke-width="4" stroke-linecap="round"/>
+</svg>

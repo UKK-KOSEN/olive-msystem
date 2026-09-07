@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f5f5f5;
+  --accent: #2b2b2b;
+  --accent-soft: #2b2b2b1a;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background: var(--bg);
+  color: #232a26;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* subtle scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d2d6ce;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b9bfb5;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-neutral-200 bg-white p-5 shadow-[0_1px_2px_rgba(16,24,20,0.05)]
+      transition-shadow duration-200;
+  }
+  .card-hover:hover {
+    @apply shadow-[0_4px_16px_rgba(16,24,20,0.08)];
+  }
+  .section-head {
+    @apply mb-3 flex flex-wrap items-center justify-between gap-2;
+  }
+  .section-title {
+    @apply label;
+  }
+  .empty-state {
+    @apply flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-neutral-200 bg-neutral-50/60 px-6 py-12 text-center;
+  }
+  .empty-title {
+    @apply text-sm font-medium text-neutral-600;
+  }
+  .empty-desc {
+    @apply text-xs text-neutral-400;
+  }
+  .skeleton {
+    @apply animate-pulse rounded-lg bg-neutral-100;
+  }
+  .divider {
+    @apply my-4 h-px w-full bg-neutral-100;
+  }
+  .hint {
+    @apply text-xs leading-relaxed text-neutral-400;
+  }
+  .label {
+    @apply text-[11px] font-semibold uppercase tracking-widest text-neutral-400;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-4 py-2
+      text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn border-transparent text-white;
+    background-color: var(--accent);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--accent), #000 12%);
+  }
+  .btn-secondary {
+    @apply btn border-transparent bg-neutral-100 text-neutral-700 hover:bg-neutral-200;
+  }
+  .btn-ghost {
+    @apply btn border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50;
+  }
+  .btn-danger {
+    @apply btn border-transparent bg-health-danger text-white hover:bg-health-danger/90;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1 text-xs;
+  }
+  .input {
+    @apply w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm
+      text-neutral-800 placeholder:text-neutral-300;
+    border-color: var(--accent-soft);
+    outline: none;
+  }
+  .input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  .bg-accent {
+    background-color: var(--accent);
+  }
+  .text-accent {
+    color: var(--accent);
+  }
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .stat-value {
+    @apply text-2xl font-semibold tracking-tight text-neutral-900;
+  }
+  .stat-label {
+    @apply text-xs font-medium text-neutral-500;
+  }
+}

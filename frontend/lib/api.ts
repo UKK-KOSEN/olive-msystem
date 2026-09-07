@@ -1,0 +1,514 @@
+export interface VideoInfo {
+  fps: number | null;
+  width: number | null;
+  height: number | null;
+  duration_seconds: number | null;
+}
+
+export interface Video {
+  id: number;
+  filename: string;
+  storage_path: string;
+  size_bytes: number;
+  duration_sec: number | null;
+  fps: number | null;
+  width: number | null;
+  height: number | null;
+  created_at: string;
+  recorded_at?: string | null;
+  status: 'pending' | 'processing' | 'done' | 'error';
+}
+
+export interface HealthState {
+  label: 'happy' | 'good' | 'caution' | 'danger';
+  score: number;
+  color: string;
+  message: string;
+  water_stress: number | null;
+  wrinkled_fruit_count: number;
+  details: string;
+  trend?: 'up' | 'down' | 'flat';
+  advice?: string[];
+  period_n?: number;
+  total_n?: number;
+  latest_score?: number;
+  latest_at?: string | null;
+}
+
+export interface ObservationOwner {
+  id: number;
+  username: string;
+  display_name?: string | null;
+  farm_name?: string | null;
+}
+
+export interface Observation {
+  id: number;
+  video_id: number;
+  timestamp_sec: number;
+  label: string | null;
+  observed_at: string;
+  filename: string;
+  leaf_count: number | null;
+  fruit_count: number | null;
+  green_coverage: number | null;
+  overall_health_score: number | null;
+  water_stress: number | null;
+  leaf_curl_index: number | null;
+  wrinkled_fruit_count: number | null;
+  annotated_path: string | null;
+  raw_frame_path: string | null;
+  health_state?: HealthState;
+  result?: Record<string, any>;
+  user_id?: number | null;
+  owner?: ObservationOwner | null;
+  explain_text?: string | null;
+  image_id?: number | null;
+  source_type?: string | null;
+}
+
+export interface OliveStatus {
+  states: Record<string, number>;
+  total_observations: number;
+  labels: Record<string, { svg: string; ja: string; color: string }>;
+  latest: Observation | null;
+  current_state: HealthState | null;
+  current_video: string | null;
+  current_timestamp: number | null;
+}
+
+export interface ImageAsset {
+  id: number;
+  filename: string;
+  storage_path: string;
+  size_bytes: number;
+  created_at: string;
+  recorded_at?: string | null;
+  status: 'pending' | 'processing' | 'done' | 'error';
+}
+
+export interface SoilMoistureInput {
+  sensor1_moisture_percent?: number | null;
+  sensor2_moisture_percent?: number | null;
+  temperature?: number | null;
+  humidity?: number | null;
+}
+
+export interface SoilMoistureHealth {
+  risk: string;
+  message: string;
+  weight: number;
+  score: number;
+}
+
+export interface SoilMoistureData {
+  sensor1_moisture_percent?: number | null;
+  sensor2_moisture_percent?: number | null;
+  temperature?: number | null;
+  humidity?: number | null;
+  measured_at?: string | null;
+  health?: SoilMoistureHealth;
+}
+
+export interface SoilStatus {
+  source: 'api' | 'manual' | 'none';
+  configured: boolean;
+  soil_moisture: SoilMoistureData;
+  health: SoilMoistureHealth;
+}
+
+export interface HealthThresholds {
+  happy: number;
+  good: number;
+  caution: number;
+}
+
+export interface SiteSettings {
+  name: string;
+  subtitle: string;
+  accent: string;
+}
+
+export interface AppSettings {
+  health_thresholds: HealthThresholds;
+  site: SiteSettings;
+}
+
+export interface AdminStats {
+  settings: { health_thresholds: HealthThresholds; site: SiteSettings };
+  soil: { configured: boolean; config: Record<string, any>; path: string };
+  max_upload_mb: number;
+  db: {
+    observations: number;
+    videos: number;
+    images: number;
+    video_storage_bytes: number;
+    image_storage_bytes: number;
+    db_bytes: number;
+  };
+}
+
+export interface VersionInfo {
+  olive_msystem: { frontend: string; backend: string };
+  olive_p: string | null;
+  python: string;
+  platform: string;
+  dependencies: Record<string, string | null>;
+}
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  role: 'farmer' | 'admin';
+  display_name?: string | null;
+  farm_name?: string | null;
+  farm_area?: string | null;
+  farm_trees?: number | null;
+  farm_variety?: string | null;
+  farm_location?: string | null;
+  farm_contact?: string | null;
+  preferences?: Record<string, any>;
+}
+
+export interface CalendarObservation {
+  id: number;
+  user_id: number;
+  observed_at: string;
+  health_state: HealthState | null;
+  leaf_count: number | null;
+  fruit_count: number | null;
+  overall_health_score: number | null;
+  source: string | null;
+  label: string | null;
+  farm_name?: string | null;
+}
+
+export interface CalendarData {
+  year: number;
+  month: number;
+  observations: Record<string, CalendarObservation[]>;
+}
+
+export interface Notification {
+  id: number;
+  title: string;
+  body: string;
+  target_role: string;
+  target_user_id: number | null;
+  created_by: number;
+  creator_name?: string | null;
+  created_at: string;
+  is_read: number;
+}
+
+export interface FarmerRecord extends AuthUser {
+  created_at: string;
+  is_active: number;
+  video_count: number;
+  image_count: number;
+  observation_count: number;
+  states: Record<'happy' | 'good' | 'caution' | 'danger', number>;
+  latest_observed_at?: string | null;
+}
+
+export interface AuthState {
+  token: string;
+  user: AuthUser;
+}
+
+// ----- token store (module-level, read by every api helper) -----
+let authToken: string | null = null;
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+}
+export function getAuthToken() {
+  return authToken;
+}
+
+async function handle(res: Response) {
+  if (res.status === 401) {
+    throw new UnauthorizedError();
+  }
+  if (!res.ok) {
+    let msg = `${res.status}`;
+    try {
+      const j = await res.json();
+      msg = j.detail || JSON.stringify(j) || msg;
+    } catch {
+      msg = res.statusText;
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export class UnauthorizedError extends Error {
+  constructor() {
+    super('認証が必要です');
+    this.name = 'UnauthorizedError';
+  }
+}
+
+function get(url: string): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  return fetch(url, { headers });
+}
+
+function send(url: string, init: { method?: string; headers?: Record<string, string>; body?: any }): Promise<Response> {
+  const headers: Record<string, string> = { ...(init.headers || {}) };
+  if (authToken && !headers['Authorization']) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+  let body = init.body;
+  if (body && typeof body === 'object' && !(body instanceof FormData)) {
+    body = JSON.stringify(body);
+    if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  }
+  return fetch(url, { method: init.method || 'GET', headers, body });
+}
+
+export const api = {
+  // ---- auth ----
+  async register(payload: { username: string; password: string; display_name?: string; farm_name?: string; farm_area?: string; farm_trees?: number; farm_variety?: string; farm_location?: string; farm_contact?: string }): Promise<AuthState> {
+    return handle(await send('/api/auth/register', { method: 'POST', body: payload }));
+  },
+  async login(username: string, password: string): Promise<AuthState> {
+    return handle(await send('/api/auth/login', { method: 'POST', body: { username, password } }));
+  },
+  async me(): Promise<AuthUser> {
+    return handle(await get('/api/auth/me'));
+  },
+  async updateProfile(payload: {
+    display_name?: string;
+    farm_name?: string;
+    farm_area?: string | null;
+    farm_trees?: number | null;
+    farm_variety?: string | null;
+    farm_location?: string | null;
+    farm_contact?: string | null;
+    password?: string;
+    preferences?: Record<string, any>;
+  }): Promise<AuthUser> {
+    return handle(await send('/api/auth/profile', { method: 'PUT', body: payload }));
+  },
+  async getPreferences(): Promise<Record<string, any>> {
+    return handle(await get('/api/auth/preferences'));
+  },
+  async updatePreferences(payload: Record<string, any>): Promise<Record<string, any>> {
+    return handle(await send('/api/auth/preferences', { method: 'PUT', body: payload }));
+  },
+  async calendar(year?: number, month?: number, farmerId?: number): Promise<CalendarData> {
+    const q = new URLSearchParams();
+    if (year) q.set('year', String(year));
+    if (month) q.set('month', String(month));
+    if (farmerId != null) q.set('farmer_id', String(farmerId));
+    const qs = q.toString();
+    return handle(await get(`/api/calendar/observations${qs ? '?' + qs : ''}`));
+  },
+  async logout(): Promise<any> {
+    try {
+      return await handle(await send('/api/auth/logout', { method: 'POST' }));
+    } finally {
+      setAuthToken(null);
+    }
+  },
+  // ---- notifications ----
+  async notifications(): Promise<Notification[]> {
+    return handle(await get('/api/notifications'));
+  },
+  async unreadCount(): Promise<{ count: number }> {
+    return handle(await get('/api/notifications/unread-count'));
+  },
+  async markNotificationRead(id: number): Promise<any> {
+    return handle(await send(`/api/notifications/${id}/read`, { method: 'POST' }));
+  },
+  async createNotification(payload: { title: string; body: string; target_role?: string; target_user_id?: number | null }): Promise<any> {
+    return handle(await send('/api/notifications', { method: 'POST', body: payload }));
+  },
+  async deleteNotification(id: number): Promise<any> {
+    return handle(await send(`/api/notifications/${id}`, { method: 'DELETE' }));
+  },
+  // ---- videos ----
+  async upload(file: File): Promise<any> {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (file.lastModified > 0) {
+      fd.append('captured_at', new Date(file.lastModified).toISOString());
+    }
+    return handle(await send('/api/videos', { method: 'POST', body: fd }));
+  },
+  async videos(status?: string): Promise<Video[]> {
+    const q = status ? `?status=${status}` : '';
+    return handle(await get(`/api/videos${q}`));
+  },
+  async videoJobs(): Promise<any[]> {
+    return handle(await get('/api/videos/jobs'));
+  },
+  async analyseTimes(videoId: number, times: number[], soilMoisture?: SoilMoistureInput, treeId?: string): Promise<any> {
+    const body: any = { times };
+    if (soilMoisture) body.soil_moisture = soilMoisture;
+    if (treeId) body.tree_id = treeId;
+    return handle(await send(`/api/videos/${videoId}/analyse`, { method: 'POST', body }));
+  },
+  async observations(videoId?: number, farmerId?: number, opts?: { from_date?: string; to_date?: string; source_type?: string }): Promise<Observation[]> {
+    let url: string;
+    if (videoId != null) {
+      url = `/api/videos/${videoId}/observations`;
+    } else {
+      const q = new URLSearchParams();
+      if (farmerId != null) q.set('farmer_id', String(farmerId));
+      if (opts?.from_date) q.set('from_date', opts.from_date);
+      if (opts?.to_date) q.set('to_date', opts.to_date);
+      if (opts?.source_type) q.set('source_type', opts.source_type);
+      const qs = q.toString();
+      url = `/api/observations${qs ? '?' + qs : ''}`;
+    }
+    return handle(await get(url));
+  },
+  async deleteObservations(ids: number[]): Promise<any> {
+    return handle(await send('/api/observations', { method: 'DELETE', body: { ids } }));
+  },
+  async exportObservations(opts?: { from_date?: string; to_date?: string; source_type?: string; farmer_id?: number }): Promise<void> {
+    const q = new URLSearchParams();
+    if (opts?.from_date) q.set('from_date', opts.from_date);
+    if (opts?.to_date) q.set('to_date', opts.to_date);
+    if (opts?.source_type) q.set('source_type', opts.source_type);
+    if (opts?.farmer_id != null) q.set('farmer_id', String(opts.farmer_id));
+    const qs = q.toString();
+    const url = `/api/observations/export${qs ? '?' + qs : ''}`;
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      let msg = `${res.status}`;
+      try { msg = (await res.json()).detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    const objectUrl = URL.createObjectURL(blob);
+    a.href = objectUrl;
+    a.download = `observations-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  },
+  async oliveStatus(): Promise<OliveStatus> {
+    return handle(await get('/api/olive/status'));
+  },
+  async health(): Promise<any> {
+    return handle(await get('/api/health'));
+  },
+  async versions(): Promise<VersionInfo> {
+    return handle(await get('/api/versions'));
+  },
+  // ---- images ----
+  async uploadImage(file: File): Promise<ImageAsset> {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (file.lastModified > 0) {
+      fd.append('captured_at', new Date(file.lastModified).toISOString());
+    }
+    return handle(await send('/api/images', { method: 'POST', body: fd }));
+  },
+  async images(): Promise<ImageAsset[]> {
+    return handle(await get('/api/images'));
+  },
+  async analyseImage(imageId: number, soilMoisture?: SoilMoistureInput, treeId?: string): Promise<any> {
+    const body: any = {};
+    if (soilMoisture) body.soil_moisture = soilMoisture;
+    if (treeId) body.tree_id = treeId;
+    return handle(await send(`/api/images/${imageId}/analyse`, { method: 'POST', body }));
+  },
+  async imageObservations(imageId: number): Promise<Observation[]> {
+    return handle(await get(`/api/images/${imageId}/observations`));
+  },
+  // ---- delete own data (farmer-scoped) ----
+  async deleteOwnVideo(id: number): Promise<any> {
+    return handle(await send(`/api/videos/${id}`, { method: 'DELETE' }));
+  },
+  async deleteOwnImage(id: number): Promise<any> {
+    return handle(await send(`/api/images/${id}`, { method: 'DELETE' }));
+  },
+  async deleteOwnObservation(id: number): Promise<any> {
+    return handle(await send(`/api/observations/${id}`, { method: 'DELETE' }));
+  },
+  // ---- soil ----
+  async soilStatus(): Promise<SoilStatus> {
+    return handle(await get('/api/soil-moisture/status'));
+  },
+  // ---- admin ----
+  async adminStats(): Promise<AdminStats> {
+    return handle(await get('/api/admin/stats'));
+  },
+  async getSettings(): Promise<{ health_thresholds: HealthThresholds }> {
+    return handle(await get('/api/admin/settings'));
+  },
+  async saveSettings(payload: { health_thresholds?: HealthThresholds; site?: Partial<SiteSettings> }): Promise<any> {
+    return handle(await send('/api/admin/settings', { method: 'PUT', body: payload }));
+  },
+  async siteSettings(): Promise<{ site: Partial<SiteSettings> }> {
+    return handle(await get('/api/settings'));
+  },
+  async testSoil(): Promise<SoilStatus> {
+    return handle(await send('/api/admin/soil-config/test', { method: 'POST' }));
+  },
+  async saveSoilConfig(payload: Record<string, any>): Promise<any> {
+    return handle(await send('/api/admin/soil-config', { method: 'PUT', body: payload }));
+  },
+  async deleteVideo(id: number): Promise<any> {
+    return handle(await send(`/api/admin/videos/${id}`, { method: 'DELETE' }));
+  },
+  async deleteImage(id: number): Promise<any> {
+    return handle(await send(`/api/admin/images/${id}`, { method: 'DELETE' }));
+  },
+  async deleteObservation(id: number): Promise<any> {
+    return handle(await send(`/api/admin/observations/${id}`, { method: 'DELETE' }));
+  },
+  async clearObservations(): Promise<any> {
+    return handle(await send('/api/admin/observations/clear', { method: 'POST' }));
+  },
+  // ---- farmer management (admin) ----
+  async listFarmers(): Promise<FarmerRecord[]> {
+    return handle(await get('/api/admin/farmers'));
+  },
+  async updateFarmer(id: number, payload: { display_name?: string; farm_name?: string; farm_area?: string; farm_trees?: number; farm_variety?: string; farm_location?: string; farm_contact?: string; is_active?: boolean }): Promise<AuthUser> {
+    return handle(await send(`/api/admin/farmers/${id}`, { method: 'PUT', body: payload }));
+  },
+  async resetFarmerPassword(id: number, new_password: string): Promise<any> {
+    return handle(await send(`/api/admin/farmers/${id}/password`, { method: 'PUT', body: { new_password } }));
+  },
+  async deleteFarmer(id: number): Promise<any> {
+    return handle(await send(`/api/admin/farmers/${id}`, { method: 'DELETE' }));
+  },
+};
+
+export function formatDuration(sec: number | null | undefined): string {
+  if (sec == null || Number.isNaN(sec)) return '—';
+  const s = Math.round(sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
+}
+
+export function formatBytes(bytes: number | null | undefined): string {
+  if (!bytes) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function formatTimestamp(sec: number | null | undefined): string {
+  if (sec == null || Number.isNaN(sec)) return '—';
+  const s = Math.round(sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${h}:${pad(m)}:${pad(ss)}`;
+}

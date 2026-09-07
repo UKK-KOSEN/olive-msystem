@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <radialGradient id="skin" cx="0.42" cy="0.36" r="0.95">
+      <stop offset="0%" stop-color="#7fa052"/>
+      <stop offset="100%" stop-color="#4c6632"/>
+    </radialGradient>
+    <linearGradient id="leafg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#93ab68"/>
+      <stop offset="100%" stop-color="#5a7340"/>
+    </linearGradient>
+  </defs>
+  <!-- leaf -->
+  <ellipse cx="150" cy="42" rx="33" ry="15" fill="url(#leafg)" transform="rotate(-28 150 42)"/>
+  <line x1="150" y1="42" x2="124" y2="58" stroke="#33461f" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- stem -->
+  <rect x="96" y="35" width="8" height="24" rx="4" fill="#6b5a33"/>
+  <!-- body -->
+  <ellipse cx="100" cy="103" rx="60" ry="74" fill="url(#skin)"/>
+  <ellipse cx="84" cy="128" rx="24" ry="32" fill="#ffffff14"/>
+  <!-- gentle closed smiling eyes -->
+  <path d="M 70 86 Q 78 78 86 86" fill="none" stroke="#223018" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M 112 86 Q 120 78 128 86" fill="none" stroke="#223018" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- soft expression lines -->
+  <path d="M 64 98 Q 62 96 60 97" fill="none" stroke="#6b5636" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/>
+  <path d="M 136 98 Q 138 96 140 97" fill="none" stroke="#6b5636" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/>
+  <!-- calm smile -->
+  <path d="M 88 108 Q 98 120 110 108" fill="none" stroke="#223018" stroke-width="4" stroke-linecap="round"/>
+</svg>

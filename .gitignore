@@ -1,0 +1,21 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# Data / artifacts
+backend/data/
+backend/app/data/
+backend/storage/
+backend/uploads/
+backend/config/soil_moisture.yaml
+backend/config/settings.json
+frontend/*.log*
+backend/*.log*
+
+# OS
+Thumbs.db
