@@ -106,7 +106,7 @@ class SoilMoistureFetcher:
             return cached[1]
 
         headers = {
-            "User-Agent": "OliveVision-SoilMoisture/1.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
             "Authorization": "Bearer " + self.api_key,
         }
         for attempt in range(self.max_retries):
