@@ -2,11 +2,20 @@
 Soil moisture integration for olive-msystem.
 
 Two sources are supported:
-  1. Automatic:  use olive-p's SoilMoistureClient to fetch live sensor data
-                 from the UKK-KOSEN Cloudflare D1 API. Active only when a
+  1. Automatic:  fetch sensor readings from the official UKK-KOSEN soil
+                 moisture API (https://soil-moisture-pages-ddl.pages.dev)
+                 using a Bearer API key.  Active only when a
                  soil_moisture.yaml config file exists.
   2. Manual:     the operator supplies sensor readings through the API; these
                  are run through the same moisture-health assessment.
+
+The automatic fetcher is implemented here (not in olive-p) so it matches the
+official API contract exactly:
+
+  * Authorization: Bearer <API_KEY> (not X-Sensor-Api-Key).
+  * /api/sensor/latest  -> single newest record.
+  * /api/sensor/history -> {"data": [...]} newest-first.
+  * /api/kits           -> {"data": [{kit_id, name}]}.
 
 Both paths produce a dict compatible with
 olive-p src.runtime.integrate_soil_moisture()::
@@ -24,34 +33,204 @@ olive-p src.runtime.integrate_soil_moisture()::
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
-from datetime import datetime
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
 from .config import OLIVE_P_DIR, SOIL_MOISTURE_CONFIG_PATH
 
+DEFAULT_BASE_URL = "https://soil-moisture-pages-ddl.pages.dev"
+
 
 def parse_observed_at_iso(observed_at: Optional[str]) -> Optional[datetime]:
-    """Parse ISO *observed_at* string to a naive local-time datetime.
+    """Parse an ISO *observed_at* string to a timezone-aware datetime (UTC-soon).
 
-    This is needed by ``get_moisture_at_time`` which expects a naive
-    ``datetime`` in the local timezone.
+    The capture timestamp of a video frame / image.  Returns ``None`` when it
+    cannot be parsed.
     """
     if not observed_at:
         return None
     try:
         dt = datetime.fromisoformat(str(observed_at).replace("Z", "+00:00"))
-        if dt.tzinfo is not None:
-            dt = dt.astimezone().replace(tzinfo=None)
+        return dt.astimezone()
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_api_ts(value: Any) -> Optional[datetime]:
+    """Parse a UTC ISO timestamp from the API (e.g. ``2026-09-01T03:00:00Z``)."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         return dt
     except (ValueError, TypeError):
         return None
 
 
+@dataclass
+class SoilMoistureFetcher:
+    """Minimal, official-spec client for the UKK-KOSEN soil moisture API."""
+
+    base_url: str = DEFAULT_BASE_URL
+    api_key: str = ""
+    default_kit_id: str = "default"
+    timeout: float = 10
+    max_retries: int = 3
+    _cache: dict = field(default_factory=dict)
+
+    def _get(self, endpoint: str, params: Optional[dict] = None) -> Any:
+        if not self.api_key:
+            raise RuntimeError("soil moisture API key is not configured")
+        params = {k: v for k, v in (params or {}).items() if v is not None}
+        url = self.base_url.rstrip("/") + endpoint
+        if params:
+            # Normalise kit id casing as the API does.
+            query = urllib.parse.urlencode(params)
+            url += "?" + query
+
+        # Small TTL cache so repeated calls for the same endpoint reuse data.
+        key = url + "|" + self.api_key
+        cached = self._cache.get(key)
+        if cached and time.time() - cached[0] < 60:
+            return cached[1]
+
+        headers = {
+            "User-Agent": "OliveVision-SoilMoisture/1.0",
+            "Authorization": "Bearer " + self.api_key,
+        }
+        for attempt in range(self.max_retries):
+            req = urllib.request.Request(url, headers=headers, method="GET")
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    self._cache[key] = (time.time(), data)
+                    return data
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < self.max_retries - 1:
+                    wait = float(e.headers.get("Retry-After", "1") or 1)
+                    time.sleep(min(wait, 10))
+                    continue
+                raise RuntimeError(f"API error {e.code}: {e.reason}") from e
+            except urllib.error.URLError as e:
+                if attempt < self.max_retries - 1:
+                    time.sleep(0.5)
+                    continue
+                raise RuntimeError(f"Network error: {e.reason}") from e
+        raise RuntimeError("soil moisture API request failed")
+
+    def get_latest(self, kit_id: Optional[str] = None) -> Optional[dict]:
+        kit_id = (kit_id or self.default_kit_id).lower()
+        return self._get("/api/sensor/latest", {"kit_id": kit_id})
+
+    def get_history(
+        self,
+        kit_id: Optional[str] = None,
+        hours: int = 24,
+        interval: str = "",
+        limit: int = 100,
+    ) -> list[dict]:
+        kit_id = (kit_id or self.default_kit_id).lower()
+        params = {
+            "kit_id": kit_id,
+            "hours": str(hours),
+            "limit": str(limit),
+        }
+        if interval:
+            params["interval"] = interval
+        result = self._get("/api/sensor/history", params)
+        if isinstance(result, dict) and "data" in result:
+            return result["data"]
+        return result if isinstance(result, list) else []
+
+    def get_kits(self) -> list[dict]:
+        result = self._get("/api/kits")
+        if isinstance(result, dict) and "data" in result:
+            return result["data"]
+        return result if isinstance(result, list) else []
+
+    def get_latest_at(
+        self,
+        target_time: datetime,
+        kit_id: Optional[str] = None,
+        window_hours: float = 2.0,
+    ) -> Optional[dict]:
+        """Return the record whose timestamp is closest to ``target_time``.
+
+        Fetches the recent history (a window around the capture time) and picks
+        the record with the smallest absolute time difference.  This mirrors the
+        old olive-p ``get_moisture_at_time`` behaviour but uses timestamps the
+        official API actually returns.
+        """
+        kit_id = (kit_id or self.default_kit_id).lower()
+        target_aware = target_time if target_time.tzinfo else target_time.astimezone()
+        target_local = target_aware.astimezone().replace(tzinfo=None)
+        start = target_local - timedelta(hours=window_hours)
+        hours_back = max(1, int((datetime.now() - start).total_seconds() / 3600) + 1)
+
+        try:
+            records = self.get_history(
+                kit_id=kit_id, hours=hours_back, limit=200
+            )
+        except Exception:
+            return None
+        if not records:
+            return None
+
+        best = None
+        best_diff = timedelta(hours=999)
+        for rec in records:
+            ts = _parse_api_ts(rec.get("measured_at") or rec.get("timestamp"))
+            if ts is None:
+                continue
+            local = ts.astimezone().replace(tzinfo=None)
+            diff = abs(local - target_local)
+            if diff < best_diff:
+                best_diff = diff
+                best = rec
+        return best
+
+
+def _load_auto_config() -> Optional[dict]:
+    """Read soil_moisture.yaml (if it exists) and return its contents."""
+    if not SOIL_MOISTURE_CONFIG_PATH.exists():
+        return None
+    try:
+        raw = yaml.safe_load(SOIL_MOISTURE_CONFIG_PATH.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _make_fetcher(config: Optional[dict]) -> SoilMoistureFetcher:
+    config = config or {}
+    # Prefer SOIL_API_KEY env var (official recommendation) over the yaml key,
+    # so the secret never needs to be committed to the repository.
+    api_key = config.get("api_key") or ""
+    env_key = os.environ.get("SOIL_API_KEY") or ""
+    if env_key:
+        api_key = env_key
+    return SoilMoistureFetcher(
+        base_url=config.get("api_base_url", DEFAULT_BASE_URL),
+        api_key=api_key,
+        default_kit_id=config.get("default_kit_id", "default"),
+        timeout=float(config.get("timeout", 10)),
+        max_retries=int(config.get("max_retries", 3)),
+    )
+
+
 def _import_olive_soil():
+    """Import olive-p's soil_moisture module (for health assessment only)."""
     sys.path.insert(0, str(OLIVE_P_DIR))
     try:
         from src import soil_moisture as sm
@@ -83,17 +262,16 @@ def build_soil_data(manual: Optional[dict],
             the capture time of the video frame / image being analysed.
     """
     sm = _import_olive_soil()
-    config = SOIL_MOISTURE_CONFIG_PATH
+    config = _load_auto_config()
     auto_ok = False
     data = None
-    if config and config.exists():
+    if config is not None:
+        fetcher = _make_fetcher(config)
         try:
-            raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
-            client = sm.SoilMoistureClient(raw)
             if target_time is not None:
-                data = client.get_moisture_at_time(target_time)
+                data = fetcher.get_latest_at(target_time)
             else:
-                data = client.get_latest()
+                data = fetcher.get_latest()
             if data:
                 auto_ok = True
         except Exception:
@@ -121,13 +299,13 @@ def build_soil_data(manual: Optional[dict],
     manual = manual or {}
     s1 = manual.get("sensor1_moisture_percent")
     s2 = manual.get("sensor2_moisture_percent")
-    data = {
+    mdata = {
         "sensor1_moisture_percent": s1,
         "sensor2_moisture_percent": s2,
         "temperature": manual.get("temperature"),
         "humidity": manual.get("humidity"),
     }
-    health = _health_of_client(sm, data)
+    mhealth = _health_of_client(sm, mdata)
     return {
         "source": "manual" if (s1 is not None or s2 is not None) else "none",
         "soil_moisture": {
@@ -136,9 +314,9 @@ def build_soil_data(manual: Optional[dict],
             "temperature": manual.get("temperature"),
             "humidity": manual.get("humidity"),
             "measured_at": manual.get("measured_at"),
-            "health": health,
+            "health": mhealth,
         },
-        "health": health,
+        "health": mhealth,
     }
 
 
