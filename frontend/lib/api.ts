@@ -396,8 +396,9 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(objectUrl);
   },
-  async oliveStatus(): Promise<OliveStatus> {
-    return handle(await get('/api/olive/status'));
+  async oliveStatus(farmerId?: number): Promise<OliveStatus> {
+    const q = farmerId != null ? `?farmer_id=${farmerId}` : '';
+    return handle(await get(`/api/olive/status${q}`));
   },
   async health(): Promise<any> {
     return handle(await get('/api/health'));

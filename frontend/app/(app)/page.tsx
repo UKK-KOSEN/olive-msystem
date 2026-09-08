@@ -112,7 +112,7 @@ export default function Dashboard() {
   useEffect(() => {
     loadVideos();
     loadAllObs();
-    api.oliveStatus().then(setOliveStatus).catch(() => setOliveStatus(null));
+    api.oliveStatus(isAdmin ? farmerId ?? undefined : undefined).then(setOliveStatus).catch(() => setOliveStatus(null));
     api.soilStatus().then(setSoilStatus).catch(() => setSoilStatus(null));
   }, [loadVideos, loadAllObs]);
 
@@ -149,13 +149,20 @@ export default function Dashboard() {
     [allObs, isAdmin, farmerId]
   );
 
+  // Re-fetch the hero health so an admin-selected farmer shows the same score
+  // as the farmer's own account (matches the scoped trend chart).
+  useEffect(() => {
+    if (!isAdmin || farmerId == null) return;
+    api.oliveStatus(farmerId).then(setOliveStatus).catch(() => setOliveStatus(null));
+  }, [isAdmin, farmerId]);
+
   // poll while processing
   useEffect(() => {
     const t = setInterval(async () => {
       if (videos.some((v) => v.status === 'processing')) {
         loadVideos();
         loadAllObs();
-        api.oliveStatus().then(setOliveStatus).catch(() => setOliveStatus(null));
+        api.oliveStatus(isAdmin ? farmerId ?? undefined : undefined).then(setOliveStatus).catch(() => setOliveStatus(null));
         videos.forEach((v) => {
           if (v.status === 'done') loadObs(v.id);
         });

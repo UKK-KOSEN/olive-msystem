@@ -287,25 +287,16 @@ def calendar_observations(
                 (start, end, farmer_id, farmer_id),
             ).fetchall()
         else:
-            # Check if farmer can see others
-            prefs = store.get_preferences(user["id"])
-            if prefs.get("can_see_others", False):
-                rows = con.execute(
-                    "SELECT id, user_id, observed_at, result_json, leaf_count, fruit_count, "
-                    "overall_health_score, source, label "
-                    "FROM observations WHERE observed_at >= ? AND observed_at < ? "
-                    "AND ( ? IS NULL OR user_id = ? ) "
-                    "ORDER BY observed_at ASC",
-                    (start, end, farmer_id, farmer_id),
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    "SELECT id, user_id, observed_at, result_json, leaf_count, fruit_count, "
-                    "overall_health_score, source, label "
-                    "FROM observations WHERE observed_at >= ? AND observed_at < ? AND user_id = ? "
-                    "ORDER BY observed_at ASC",
-                    (start, end, user["id"]),
-                ).fetchall()
+            # Farmers are strictly confined to their own data. Ignore any
+            # farmer_id they pass and never let can_see_others cross the
+            # ownership boundary for other farmers' rows.
+            rows = con.execute(
+                "SELECT id, user_id, observed_at, result_json, leaf_count, fruit_count, "
+                "overall_health_score, source, label "
+                "FROM observations WHERE observed_at >= ? AND observed_at < ? AND user_id = ? "
+                "ORDER BY observed_at ASC",
+                (start, end, user["id"]),
+            ).fetchall()
 
         # Group by date
         by_date = {}
@@ -788,13 +779,19 @@ def storage_file(folder: str, file_name: str):
 # Character health
 # --------------------------------------------------------------------------
 @app.get("/api/olive/status")
-def olive_status(user: dict = Depends(get_current_user)):
+def olive_status(user: dict = Depends(get_current_user),
+                 farmer_id: Optional[int] = Query(None)):
     """Aggregate observations into a current state + per-state summaries.
 
-    ``current_state`` is computed from *all* observation data (one score per
-    media, recency-weighted) plus trend and recommended next actions.
+    ``current_state`` is computed from the observations visible to the caller.
+    For an admin, ``farmer_id`` scopes the aggregation to a single farmer so
+    the dashboard hero matches the farmer-selected trend chart.
     """
-    obs = store.list_observations(limit=500, user_id=_scope_id(user))
+    if user["role"] == "admin" and farmer_id is not None:
+        uid = farmer_id
+    else:
+        uid = _scope_id(user)
+    obs = store.list_observations(limit=500, user_id=uid)
     latest = {}
     for o in obs:
         vid = o["video_id"]

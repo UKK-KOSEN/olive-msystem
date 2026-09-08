@@ -200,6 +200,16 @@ export function TrendChart({ obs, width = 720, height = 300, minWidth = 560 }: {
             </linearGradient>
           </defs>
 
+          {/* state boundary guides (35/55/75) */}
+          {[0.35, 0.55, 0.75].map((v) => {
+            const zone = ZONES.find((z) => v >= z.lo && v < z.hi);
+            const y = yFor(v);
+            return (
+              <line key={v} x1={pad.left} y1={y} x2={width - pad.right} y2={y}
+                stroke={zone ? `${zone.color}55` : '#ccc'} strokeWidth="1" strokeDasharray="4 4" opacity="0.7" />
+            );
+          })}
+
           {/* horizontal gridlines + y labels (percent) */}
           {[0, 0.25, 0.5, 0.75, 1].map((v) => {
             const y = yFor(v);
@@ -211,10 +221,10 @@ export function TrendChart({ obs, width = 720, height = 300, minWidth = 560 }: {
                   y1={y}
                   x2={width - pad.right}
                   y2={y}
-                  stroke={isBase ? '#e4e7df' : '#f1f3ee'}
-                  strokeWidth="1"
+                  stroke={isBase ? '#d5d9d0' : '#e9ece4'}
+                  strokeWidth={isBase ? 1.5 : 1}
                 />
-                <text x={pad.left - 8} y={y + 3} textAnchor="end" fontSize="11" fill="#9aa39b">
+                <text x={pad.left - 8} y={y + 3.5} textAnchor="end" fontSize="12" fill="#6b746c" fontWeight="500">
                   {Math.round(v * 100)}
                 </text>
               </g>
@@ -234,8 +244,8 @@ export function TrendChart({ obs, width = 720, height = 300, minWidth = 560 }: {
                 : label;
             return (
               <g key={i}>
-                <line x1={p.x} y1={pad.top} x2={p.x} y2={pad.top + innerH} stroke="#f6f7f3" strokeWidth="1" />
-                <text x={p.x} y={height - 9} textAnchor="middle" fontSize="10" fill="#9aa39b">
+                <line x1={p.x} y1={pad.top} x2={p.x} y2={pad.top + innerH} stroke="#eef0ea" strokeWidth="1" />
+                <text x={p.x} y={height - 7} textAnchor="middle" fontSize="11" fill="#6b746c" fontWeight="500">
                   {showFull}
                 </text>
               </g>
@@ -247,7 +257,7 @@ export function TrendChart({ obs, width = 720, height = 300, minWidth = 560 }: {
 
           {/* line */}
           {ptsF.length > 1 && (
-            <path d={linePath} fill="none" stroke="#2b2b2b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path d={linePath} fill="none" stroke="#1a1a1a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           )}
 
           {/* hover crosshair */}
@@ -263,15 +273,15 @@ export function TrendChart({ obs, width = 720, height = 300, minWidth = 560 }: {
             />
           )}
 
-          {/* points — only drawn when sparse, to avoid a noisy swarm */}
+          {/* points — state-colored and clearly visible */}
           {ptsF.map((p, i) => {
             const isLast = i === ptsF.length - 1;
             const color = healthColor(p.obs.health_state?.label ?? '');
             if (isLast) {
               return (
                 <g key={i}>
-                  <circle cx={p.x} cy={p.y} r={hoverIdx === i ? 11 : 9} fill={color} opacity="0.15" />
-                  <circle cx={p.x} cy={p.y} r={6.5} fill={color} stroke="#fff" strokeWidth="2" />
+                  <circle cx={p.x} cy={p.y} r={hoverIdx === i ? 12 : 10} fill={color} opacity="0.2" />
+                  <circle cx={p.x} cy={p.y} r={7} fill={color} stroke="#fff" strokeWidth="2.5" />
                 </g>
               );
             }
@@ -281,9 +291,9 @@ export function TrendChart({ obs, width = 720, height = 300, minWidth = 560 }: {
                 key={i}
                 cx={p.x}
                 cy={p.y}
-                r={hoverIdx === i ? 5 : 3.5}
-                fill="#fff"
-                stroke={color}
+                r={hoverIdx === i ? 6 : 4.5}
+                fill={color}
+                stroke="#fff"
                 strokeWidth="2"
                 style={{ transition: 'r 0.12s ease' }}
               />
@@ -291,13 +301,13 @@ export function TrendChart({ obs, width = 720, height = 300, minWidth = 560 }: {
           })}
 
           {/* latest value pill */}
-          <rect x={pill.bx - pill.w / 2} y={pill.by} width={pill.w} height={pill.h} rx={11} fill="#ffffff" stroke={lastColor} strokeWidth="1.5" />
-          <circle cx={pill.bx - pill.w / 2 + 12} cy={pill.by + pill.h / 2} r={3.5} fill={lastColor} />
+          <rect x={pill.bx - pill.w / 2} y={pill.by} width={pill.w} height={pill.h} rx={11} fill="#ffffff" stroke={lastColor} strokeWidth="2" />
+          <circle cx={pill.bx - pill.w / 2 + 12} cy={pill.by + pill.h / 2} r={4} fill={lastColor} />
           <text
-            x={pill.bx - pill.w / 2 + 16}
-            y={pill.by + 15}
-            fontSize="12"
-            fontWeight="700"
+            x={pill.bx - pill.w / 2 + 17}
+            y={pill.by + 15.5}
+            fontSize="12.5"
+            fontWeight="800"
             fill={lastColor}
           >
             {(last.score * 100).toFixed(0)}点

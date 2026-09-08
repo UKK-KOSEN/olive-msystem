@@ -1,0 +1,29 @@
+@echo off
+setlocal enabledelayedexpansion
+cd /d "%~dp0"
+
+rem ============================================
+rem  olive-msystem - Backend watchdog (auto-restart)
+rem  Runs uvicorn on port 8000. If the process dies
+rem  (crash) it restarts after a short delay. The
+rem  single-instance guard prevents double startup.
+rem ============================================
+
+set PORT=8000
+
+:check
+netstat -ano | findstr /R /C:":%PORT% .*LISTENING" >nul 2>&1
+if errorlevel 1 goto start
+echo [watchdog] Backend already running on port %PORT%. Only monitoring...
+timeout /t 5 /nobreak >nul
+goto check
+
+:start
+echo [watchdog] Starting backend (uvicorn on %PORT%)...
+pushd backend
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port %PORT%
+set EXIT=%errorlevel%
+popd
+echo [watchdog] Backend exited (code %EXIT%). Restarting in 3s...
+timeout /t 3 /nobreak >nul
+goto check
