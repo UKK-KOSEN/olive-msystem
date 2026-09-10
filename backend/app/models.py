@@ -78,6 +78,7 @@ class AnalyseImageRequest(BaseModel):
     soil_moisture: SoilMoistureInput | None = None
     drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
     upscale: bool | None = Field(default=None, description="AI-upscale low-res frames (True force, False disable, None auto from drone_mode)")
+    compare: bool = Field(default=False, description="When upscale is enabled, also return analysis on the original non-upscaled image")
 
 
 class HealthState(BaseModel):

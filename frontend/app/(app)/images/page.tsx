@@ -36,6 +36,8 @@ export default function ImageAnalysisPage() {
   const [running, setRunning] = useState<number | null>(null);
   const [runProgress, setRunProgress] = useState<{ imageId: number; startTime: number; estSeconds: number } | null>(null);
   const [results, setResults] = useState<Record<number, Observation>>({});
+  const [comparisonResults, setComparisonResults] = useState<Record<number, Observation>>({});
+  const [compareView, setCompareView] = useState<Record<number, 'upscaled' | 'original'>>({});
   const [soilInputs, setSoilInputs] = useState<Record<number, SoilMoistureInput | undefined>>({});
   const [treeInputs, setTreeInputs] = useState<Record<number, string>>({});
   const [droneFlags, setDroneFlags] = useState<Record<number, boolean>>({});
@@ -125,11 +127,21 @@ export default function ImageAnalysisPage() {
     setError(null);
     setRunning(img.id);
     const estSeconds = Math.max(3, Math.min(30, Math.round((img.size_bytes || 100000) / 100000)));
-    setRunProgress({ imageId: img.id, startTime: Date.now(), estSeconds });
+    setRunProgress({ imageId: img.id, startTime: Date.now(), estSeconds: upscale ? estSeconds * 2 : estSeconds });
     try {
-      const data = await api.analyseImage(img.id, soil, treeId, droneMode, upscale);
+      // When upscale is enabled, also request comparison (non-upscaled) analysis
+      const data = await api.analyseImage(img.id, soil, treeId, droneMode, upscale, upscale);
       if (data?.observation) {
         setResults((prev) => ({ ...prev, [img.id]: data.observation }));
+      }
+      // Handle comparison results (non-upscaled pass)
+      if (data?.observations && data.observations.length === 2) {
+        setComparisonResults((prev) => ({ ...prev, [img.id]: data.observations[1] }));
+        setCompareView((prev) => ({ ...prev, [img.id]: 'upscaled' }));
+      } else {
+        // Clear any previous comparison if not in compare mode
+        setComparisonResults((prev) => { const n = { ...prev }; delete n[img.id]; return n; });
+        setCompareView((prev) => { const n = { ...prev }; delete n[img.id]; return n; });
       }
       setExpanded(img.id);
       await load();
@@ -227,8 +239,11 @@ export default function ImageAnalysisPage() {
           <div className="space-y-3">
             {shown.map((img) => {
               const res = results[img.id];
+              const compRes = comparisonResults[img.id];
+              const activeView = compareView[img.id] ?? 'upscaled';
+              const activeRes = activeView === 'original' && compRes ? compRes : res;
               const open = expanded === img.id;
-              const annotatedUrl = (res?.result?.['_frame_annotated_url'] as string) || null;
+              const annotatedUrl = (activeRes?.result?.['_frame_annotated_url'] as string) || null;
               return (
                 <div key={img.id} className="card">
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -329,7 +344,34 @@ export default function ImageAnalysisPage() {
                           <AnalysisProgress elapsed={elapsed} estSeconds={runProgress.estSeconds} />
                         )}
                         {!running && res ? (
-                          <ObservationDetail obs={res} />
+                          <div>
+                            {/* Comparison tabs when both versions exist */}
+                            {compRes && (
+                              <div className="mb-3 flex gap-1 rounded-lg bg-neutral-100 p-1">
+                                <button
+                                  onClick={() => setCompareView((prev) => ({ ...prev, [img.id]: 'upscaled' }))}
+                                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                                    (compareView[img.id] ?? 'upscaled') === 'upscaled'
+                                      ? 'bg-violet-600 text-white shadow'
+                                      : 'text-neutral-600 hover:text-neutral-800'
+                                  }`}
+                                >
+                                  拡大版（AI upscale）
+                                </button>
+                                <button
+                                  onClick={() => setCompareView((prev) => ({ ...prev, [img.id]: 'original' }))}
+                                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                                    compareView[img.id] === 'original'
+                                      ? 'bg-neutral-700 text-white shadow'
+                                      : 'text-neutral-600 hover:text-neutral-800'
+                                  }`}
+                                >
+                                  元画像（upscalなし）
+                                </button>
+                              </div>
+                            )}
+                            <ObservationDetail obs={(compareView[img.id] ?? 'upscaled') === 'original' ? compRes! : res} />
+                          </div>
                         ) : !running && !res ? (
                           <div className="rounded-lg border border-dashed border-neutral-200 p-6 text-center text-sm text-neutral-400">
                             解析結果がまだありません。「解析」を押してください。

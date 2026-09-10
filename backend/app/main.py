@@ -660,7 +660,8 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
     try:
         rec = grader.analyze_image_file(str(image_path), str(out_dir), source,
                                         drone_mode=req.drone_mode,
-                                        upscale=req.upscale)
+                                        upscale=req.upscale,
+                                        compare=req.compare)
     except Exception as exc:
         store.update_image(image_id, status="error")
         raise HTTPException(500, f"analysis failed: {exc}")
@@ -693,8 +694,43 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
             rec[key + "_url"] = f"/storage/{rel.as_posix()}"
 
     store.add_observation("image", rec, image_id=image_id, user_id=user["id"])
+
+    # Handle comparison result (non-upscaled pass)
+    comp_rec = rec.pop("_comparison", None)
+    comparison_obs = None
+    if comp_rec and isinstance(comp_rec, dict):
+        if req.tree_id:
+            comp_rec["tree_id"] = req.tree_id
+        elif not comp_rec.get("tree_id"):
+            comp_rec["tree_id"] = None
+        comp_rec["observed_at"] = rec["observed_at"]
+        target_dt2 = parse_observed_at_iso(comp_rec.get("observed_at"))
+        soil_data2 = build_soil_data(req.soil_moisture.dict() if req.soil_moisture else None,
+                                     target_time=target_dt2)
+        integrate_soil(comp_rec, soil_data2)
+        comp_rec["soil_source"] = soil_data2.get("source", "none")
+        comp_rec["health_state"] = health_state(comp_rec)
+        try:
+            comp_rec["explain_text"] = explain_detection_ja(comp_rec)
+        except Exception:
+            comp_rec["explain_text"] = None
+        # Convert comparison annotated image path to URL
+        for key in ("_frame_raw", "_frame_annotated"):
+            if comp_rec.get(key):
+                p = Path(comp_rec[key]).resolve()
+                try:
+                    rel = p.relative_to(STORAGE_DIR.resolve())
+                except ValueError:
+                    rel = Path(p.name)
+                comp_rec[key + "_url"] = f"/storage/{rel.as_posix()}"
+        store.add_observation("image", comp_rec, image_id=image_id, user_id=user["id"])
+        comparison_obs = comp_rec
+
     store.update_image(image_id, status="done")
-    return {"observation": rec}
+    result = {"observation": rec}
+    if comparison_obs:
+        result["observations"] = [rec, comparison_obs]
+    return result
 
 
 # --------------------------------------------------------------------------

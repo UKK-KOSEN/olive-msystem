@@ -575,12 +575,13 @@ export const api = {
   async images(): Promise<ImageAsset[]> {
     return handle(await get('/api/images'));
   },
-  async analyseImage(imageId: number, soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean, upscale?: boolean): Promise<any> {
+  async analyseImage(imageId: number, soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean, upscale?: boolean, compare?: boolean): Promise<any> {
     const body: any = {};
     if (soilMoisture) body.soil_moisture = soilMoisture;
     if (treeId) body.tree_id = treeId;
     if (droneMode) body.drone_mode = true;
     if (upscale) body.upscale = true;
+    if (compare) body.compare = true;
     return handle(await send(`/api/images/${imageId}/analyse`, { method: 'POST', body }));
   },
   async imageObservations(imageId: number): Promise<Observation[]> {

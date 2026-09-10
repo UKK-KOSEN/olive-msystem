@@ -127,11 +127,16 @@ class OliveAnalyzer:
 
     def analyze_image_file(self, image_path: str, output_dir: str, source: str,
                            drone_mode: bool = False,
-                           upscale: Optional[bool] = None) -> dict:
+                           upscale: Optional[bool] = None,
+                           compare: bool = False) -> dict:
         """Analyse a single still image file and write annotated/raw copies.
 
         Returns a JSON-serialisable record (mirrors the per-time records
         produced by analyze_video_at_times, with label 'image').
+
+        When ``compare=True`` and upscaling actually occurred, the returned
+        dict includes a ``_comparison`` key holding the analysis result
+        produced on the original (non-upscaled) frame.
         """
         import cv2
         frame = cv2.imread(str(image_path))
@@ -151,6 +156,31 @@ class OliveAnalyzer:
         rec["timestamp_sec"] = 0.0
         rec["label"] = "image"
         rec["source"] = source
+        rec["ok"] = True
+
+        # Run a second pass on the original (non-upscaled) frame for comparison
+        if compare and rec.get("upscaled"):
+            comp = self.compare_analysis(frame, source, drone_mode=drone_mode)
+            # Save comparison annotated image
+            comp_annotated_path = out / "annotated_original.jpg"
+            if comp.get("_annotated_frame") is not None:
+                _imwrite(comp_annotated_path, comp.pop("_annotated_frame"))
+                comp["_frame_annotated"] = str(comp_annotated_path)
+            rec["_comparison"] = comp
+
+        return rec
+
+    def compare_analysis(self, image_bgr, source: str,
+                         drone_mode: bool = False) -> dict:
+        """Analyse the original (non-upscaled) frame for comparison.
+
+        Returns a JSON-serialisable result dict with ``upscaled=False``.
+        """
+        result, annotated = self.analyze_image(image_bgr, source,
+                                               drone_mode=drone_mode,
+                                               upscale=False)
+        rec = {k: v for k, v in result.items() if not isinstance(v, np.ndarray)}
+        rec["_annotated_frame"] = annotated
         rec["ok"] = True
         return rec
 
