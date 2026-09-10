@@ -1,6 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  async redirects() {
+    // /versions was merged into /algorithm — keep old bookmarks working.
+    return [
+      { source: '/versions', destination: '/algorithm', permanent: true },
+    ];
+  },
   async rewrites() {
     // Proxy API + storage calls to the FastAPI backend so the browser only
     // ever talks to the same origin (avoids CORS entirely in production).

@@ -58,18 +58,6 @@ const nav: { href: string; label: string; icon: React.ReactNode; adminOnly?: boo
     ),
   },
   {
-    href: '/versions',
-    label: 'バージョン',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M21 12a9 9 0 1 1-9-9" />
-        <path d="M21 3 12 12" />
-        <path d="M21 3h-6" />
-        <path d="M21 3v6" />
-      </svg>
-    ),
-  },
-  {
     href: '/calendar',
     label: '観測カレンダー',
     icon: (
@@ -103,7 +91,7 @@ const nav: { href: string; label: string; icon: React.ReactNode; adminOnly?: boo
   },
   {
     href: '/algorithm',
-    label: '検出アルゴリズム',
+    label: '検出アルゴリズム・システム構成',
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 3 4 8 9 13" />
@@ -246,7 +234,7 @@ export default function Sidebar() {
         )}
 
         <Link
-          href="/versions"
+          href="/algorithm"
           className="mt-2 block rounded-md px-1 py-1 text-[11px] text-neutral-400 transition-colors hover:text-neutral-700"
         >
           <span className="flex items-center gap-1.5">
