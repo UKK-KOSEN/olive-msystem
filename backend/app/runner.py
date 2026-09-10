@@ -69,7 +69,7 @@ class Runner:
         self.thread.start()
 
     def enqueue(self, video_id: int, times: list[float], tree_id: Optional[str] = None,
-                soil_manual: Optional[dict] = None) -> dict:
+                soil_manual: Optional[dict] = None, drone_mode: bool = False) -> dict:
         with self._lock:
             job = {
                 "job_id": self._job_id,
@@ -77,6 +77,7 @@ class Runner:
                 "times": times,
                 "tree_id": tree_id,
                 "soil_manual": soil_manual,
+                "drone_mode": drone_mode,
                 "status": "queued",
                 "enqueued_at": time.time(),
                 "started_at": None,
@@ -133,12 +134,12 @@ class Runner:
         grader = _grader()
         out_dir = STORAGE_DIR / str(job["video_id"])
         out_dir.mkdir(parents=True, exist_ok=True)
-        tree_id = job.get("tree_id")
-        source = f"video#{job['video_id']}" + (f":{tree_id}" if tree_id else "")
+        requested_tree_id = job.get("tree_id")
+        source = f"video#{job['video_id']}" + (f":{requested_tree_id}" if requested_tree_id else "")
         try:
             results = grader.analyze_video_at_times(
                 str(video_path), job["times"], str(out_dir), source,
-                drone_mode=False,
+                drone_mode=bool(job.get("drone_mode")),
             )
             saved = 0
             total = len(job["times"]) or 1
@@ -147,7 +148,12 @@ class Runner:
                 job["progress"] = min(0.95, idx / total)
                 if not rec.get("ok"):
                     continue
-                rec["tree_id"] = tree_id
+                # Manually-specified tree id wins; otherwise keep the tree id
+                # that olive-p recognised from a QR code in the frame.
+                if requested_tree_id:
+                    rec["tree_id"] = requested_tree_id
+                elif not rec.get("tree_id"):
+                    rec["tree_id"] = None
                 rec["observed_at"] = _frame_observed_at(video, rec)
                 target_dt = parse_observed_at_iso(rec.get("observed_at"))
                 soil_data = build_soil_data(manual, target_time=target_dt)

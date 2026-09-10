@@ -60,6 +60,11 @@ export function ObservationDetail({ obs }: { obs: Observation }) {
           </div>
           <div className="text-xs text-neutral-500">
             {obs.observed_at ? new Date(obs.observed_at).toLocaleString('ja-JP') : ''}
+            {obs.tree_id && (
+              <span className="ml-2 inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                {obs.tree_id}
+              </span>
+            )}
             {obs.owner && (
               <span className="ml-2">・ {obs.owner.farm_name ?? obs.owner.display_name ?? obs.owner.username}</span>
             )}

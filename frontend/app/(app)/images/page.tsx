@@ -37,6 +37,8 @@ export default function ImageAnalysisPage() {
   const [runProgress, setRunProgress] = useState<{ imageId: number; startTime: number; estSeconds: number } | null>(null);
   const [results, setResults] = useState<Record<number, Observation>>({});
   const [soilInputs, setSoilInputs] = useState<Record<number, SoilMoistureInput | undefined>>({});
+  const [treeInputs, setTreeInputs] = useState<Record<number, string>>({});
+  const [droneFlags, setDroneFlags] = useState<Record<number, boolean>>({});
   const [expanded, setExpanded] = useState<number | null>(null);
   const [removing, setRemoving] = useState<number | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ImageAsset | null>(null);
@@ -118,14 +120,14 @@ export default function ImageAnalysisPage() {
     if (files.length) handleFiles(files);
   };
 
-  const runImage = async (img: ImageAsset, soil?: SoilMoistureInput) => {
+  const runImage = async (img: ImageAsset, soil?: SoilMoistureInput, treeId?: string, droneMode = false) => {
     setError(null);
     setRunning(img.id);
     // Estimate analysis time: ~1s per 100KB, min 3s, max 30s
     const estSeconds = Math.max(3, Math.min(30, Math.round((img.size_bytes || 100000) / 100000)));
     setRunProgress({ imageId: img.id, startTime: Date.now(), estSeconds });
     try {
-      const data = await api.analyseImage(img.id, soil);
+      const data = await api.analyseImage(img.id, soil, treeId, droneMode);
       if (data?.observation) {
         setResults((prev) => ({ ...prev, [img.id]: data.observation }));
       }
@@ -280,9 +282,27 @@ export default function ImageAnalysisPage() {
                           <SoilInputPanel
                             onChange={(v) => setSoilInputs((prev) => ({ ...prev, [img.id]: v }))}
                           />
+                          <div className="mt-2.5 space-y-2">
+                            <input
+                              type="text"
+                              value={treeInputs[img.id] ?? ''}
+                              onChange={(e) => setTreeInputs((prev) => ({ ...prev, [img.id]: e.target.value }))}
+                              placeholder="樹木ID（例: 第3試験樹・空欄でQR自動認識）"
+                              className="input w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm"
+                            />
+                            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-600">
+                              <input
+                                type="checkbox"
+                                checked={droneFlags[img.id] ?? false}
+                                onChange={(e) => setDroneFlags((prev) => ({ ...prev, [img.id]: e.target.checked }))}
+                                className="h-4 w-4 rounded"
+                              />
+                              ドローン撮影（低解像度・上空からの画像）
+                            </label>
+                          </div>
                           <div className="mt-2">
                             <button
-                              onClick={() => runImage(img, soilInputs[img.id])}
+                              onClick={() => runImage(img, soilInputs[img.id], treeInputs[img.id]?.trim() || undefined, droneFlags[img.id] ?? false)}
                               disabled={running === img.id}
                               className="btn-secondary w-full"
                             >

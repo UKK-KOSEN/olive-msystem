@@ -50,6 +50,7 @@ class AnalyseTimesRequest(BaseModel):
     times: list[float] = Field(..., description="Seconds from the start of the video")
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
+    drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
 
 
 class AnalyseTimesTextRequest(BaseModel):
@@ -57,6 +58,7 @@ class AnalyseTimesTextRequest(BaseModel):
     times: list[str] = Field(..., description="Time specs, e.g. ['00:00:15','00:00:30']")
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
+    drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
 
 
 class SoilMoistureInput(BaseModel):
@@ -72,6 +74,7 @@ class AnalyseImageRequest(BaseModel):
     """Analyse a single uploaded image."""
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
+    drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
 
 
 class HealthState(BaseModel):

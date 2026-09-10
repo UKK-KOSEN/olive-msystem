@@ -88,16 +88,17 @@ class OliveAnalyzer:
         return self._Analyzer(config, resolution_mode="auto", drone_mode=drone_mode)
 
     # ---- image analysis ---------------------------------------------------
-    def analyze_image(self, image_bgr, source: str):
+    def analyze_image(self, image_bgr, source: str, drone_mode: bool = False):
         """Run the olive-p algorithm on a single BGR frame.
 
         Returns the full result dict (with numpy masks intact for drawing)
         plus the annotated BGR image.
         """
-        analyzer = self._new_analyzer()
+        analyzer = self._new_analyzer(drone_mode=drone_mode)
         return analyzer.analyze(image_bgr, source)
 
-    def analyze_image_file(self, image_path: str, output_dir: str, source: str) -> dict:
+    def analyze_image_file(self, image_path: str, output_dir: str, source: str,
+                           drone_mode: bool = False) -> dict:
         """Analyse a single still image file and write annotated/raw copies.
 
         Returns a JSON-serialisable record (mirrors the per-time records
@@ -112,7 +113,7 @@ class OliveAnalyzer:
         raw_path = out / "image_raw.jpg"
         annotated_path = out / "annotated.jpg"
         _imwrite(raw_path, frame)
-        result, annotated = self.analyze_image(frame, source)
+        result, annotated = self.analyze_image(frame, source, drone_mode=drone_mode)
         _imwrite(annotated_path, annotated)
         rec = {k: v for k, v in result.items() if not isinstance(v, np.ndarray)}
         rec["_frame_raw"] = str(raw_path)

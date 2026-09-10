@@ -65,6 +65,14 @@ export interface Observation {
   explain_text?: string | null;
   image_id?: number | null;
   source_type?: string | null;
+  tree_id?: string | null;
+}
+
+export interface TreeRecord {
+  tree_id: string;
+  observation_count: number;
+  first_seen: string | null;
+  last_seen: string | null;
 }
 
 export interface OliveStatus {
@@ -480,13 +488,14 @@ export const api = {
   async videoJobs(): Promise<any[]> {
     return handle(await get('/api/videos/jobs'));
   },
-  async analyseTimes(videoId: number, times: number[], soilMoisture?: SoilMoistureInput, treeId?: string): Promise<any> {
+  async analyseTimes(videoId: number, times: number[], soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean): Promise<any> {
     const body: any = { times };
     if (soilMoisture) body.soil_moisture = soilMoisture;
     if (treeId) body.tree_id = treeId;
+    if (droneMode) body.drone_mode = true;
     return handle(await send(`/api/videos/${videoId}/analyse`, { method: 'POST', body }));
   },
-  async observations(videoId?: number, farmerId?: number, opts?: { from_date?: string; to_date?: string; source_type?: string }): Promise<Observation[]> {
+  async observations(videoId?: number, farmerId?: number, opts?: { from_date?: string; to_date?: string; source_type?: string; tree_id?: string }): Promise<Observation[]> {
     let url: string;
     if (videoId != null) {
       url = `/api/videos/${videoId}/observations`;
@@ -496,20 +505,25 @@ export const api = {
       if (opts?.from_date) q.set('from_date', opts.from_date);
       if (opts?.to_date) q.set('to_date', opts.to_date);
       if (opts?.source_type) q.set('source_type', opts.source_type);
+      if (opts?.tree_id) q.set('tree_id', opts.tree_id);
       const qs = q.toString();
       url = `/api/observations${qs ? '?' + qs : ''}`;
     }
     return handle(await get(url));
   },
+  async listTrees(): Promise<TreeRecord[]> {
+    return handle(await get('/api/trees'));
+  },
   async deleteObservations(ids: number[]): Promise<any> {
     return handle(await send('/api/observations', { method: 'DELETE', body: { ids } }));
   },
-  async exportObservations(opts?: { from_date?: string; to_date?: string; source_type?: string; farmer_id?: number }): Promise<void> {
+  async exportObservations(opts?: { from_date?: string; to_date?: string; source_type?: string; farmer_id?: number; tree_id?: string }): Promise<void> {
     const q = new URLSearchParams();
     if (opts?.from_date) q.set('from_date', opts.from_date);
     if (opts?.to_date) q.set('to_date', opts.to_date);
     if (opts?.source_type) q.set('source_type', opts.source_type);
     if (opts?.farmer_id != null) q.set('farmer_id', String(opts.farmer_id));
+    if (opts?.tree_id) q.set('tree_id', opts.tree_id);
     const qs = q.toString();
     const url = `/api/observations/export${qs ? '?' + qs : ''}`;
     const headers: Record<string, string> = {};
@@ -560,10 +574,11 @@ export const api = {
   async images(): Promise<ImageAsset[]> {
     return handle(await get('/api/images'));
   },
-  async analyseImage(imageId: number, soilMoisture?: SoilMoistureInput, treeId?: string): Promise<any> {
+  async analyseImage(imageId: number, soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean): Promise<any> {
     const body: any = {};
     if (soilMoisture) body.soil_moisture = soilMoisture;
     if (treeId) body.tree_id = treeId;
+    if (droneMode) body.drone_mode = true;
     return handle(await send(`/api/images/${imageId}/analyse`, { method: 'POST', body }));
   },
   async imageObservations(imageId: number): Promise<Observation[]> {

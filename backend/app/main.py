@@ -648,12 +648,18 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
     out_dir.mkdir(parents=True, exist_ok=True)
     source = f"image#{image_id}" + (f":{req.tree_id}" if req.tree_id else "")
     try:
-        rec = grader.analyze_image_file(str(image_path), str(out_dir), source)
+        rec = grader.analyze_image_file(str(image_path), str(out_dir), source,
+                                        drone_mode=req.drone_mode)
     except Exception as exc:
         store.update_image(image_id, status="error")
         raise HTTPException(500, f"analysis failed: {exc}")
 
-    rec["tree_id"] = req.tree_id
+    # Manually-specified tree id wins; otherwise keep the tree id that
+    # olive-p recognised from a QR code in the image.
+    if req.tree_id:
+        rec["tree_id"] = req.tree_id
+    elif not rec.get("tree_id"):
+        rec["tree_id"] = None
     # Timestamp the observation at the capture time, not the analysis time.
     rec["observed_at"] = image.get("recorded_at") or image.get("created_at") or rec.get("observed_at")
     target_dt = parse_observed_at_iso(rec.get("observed_at"))
@@ -730,7 +736,8 @@ def soil_moisture_status():
 @app.post("/api/videos/{video_id}/analyse")
 def analyse_video(video_id: int, req: AnalyseTimesRequest, user: dict = Depends(get_current_user)):
     """Analyse an uploaded video at the given timestamps (seconds)."""
-    return _enqueue(video_id, req.times, req.tree_id, req.soil_moisture, user)
+    return _enqueue(video_id, req.times, req.tree_id, req.soil_moisture, user,
+                    drone_mode=req.drone_mode)
 
 
 @app.post("/api/videos/{video_id}/analyse-times")
@@ -740,12 +747,14 @@ def analyse_video_text(video_id: int, req: AnalyseTimesTextRequest, user: dict =
         times = [parse_time(t) for t in req.times]
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    return _enqueue(video_id, times, req.tree_id, req.soil_moisture, user)
+    return _enqueue(video_id, times, req.tree_id, req.soil_moisture, user,
+                    drone_mode=req.drone_mode)
 
 
 def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
              soil_moisture: Optional[SoilMoistureInput] = None,
-             user: dict = None):
+             user: dict = None,
+             drone_mode: bool = False):
     _owned_video(video_id, user)
     video = store.get_video(video_id)
     if video["status"] == "processing":
@@ -753,7 +762,8 @@ def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
     if not times:
         raise HTTPException(400, "no times given")
     job = runner.enqueue(video_id, sorted(set(round(t, 3) for t in times)), tree_id,
-                         soil_manual=soil_moisture.dict() if soil_moisture else None)
+                         soil_manual=soil_moisture.dict() if soil_moisture else None,
+                         drone_mode=drone_mode)
     return {"job": job}
 
 
@@ -814,6 +824,7 @@ def image_observations(image_id: int, user: dict = Depends(get_current_user)):
 def all_observations(source_type: Optional[str] = Query(None),
                      limit: int = Query(200),
                      farmer_id: Optional[int] = Query(None),
+                     tree_id: Optional[str] = Query(None),
                      from_date: Optional[str] = Query(None),
                      to_date: Optional[str] = Query(None),
                      user: dict = Depends(get_current_user)):
@@ -823,9 +834,16 @@ def all_observations(source_type: Optional[str] = Query(None),
         uid = _scope_id(user)
     return _finalize(store.list_observations(source_type=source_type,
                                              user_id=uid,
+                                             tree_id=tree_id,
                                              from_date=from_date,
                                              to_date=to_date,
                                              limit=limit))
+
+
+@app.get("/api/trees")
+def list_trees(user: dict = Depends(get_current_user)):
+    """Distinct tree ids (QR-recognised or manually assigned) for tree tracing."""
+    return store.list_trees(user_id=_scope_id(user))
 
 
 @app.delete("/api/observations")
@@ -851,6 +869,7 @@ def delete_observations(ids: list[int] = Body(..., embed=True),
 @app.get("/api/observations/export")
 def export_observations(source_type: Optional[str] = Query(None),
                         farmer_id: Optional[int] = Query(None),
+                        tree_id: Optional[str] = Query(None),
                         from_date: Optional[str] = Query(None),
                         to_date: Optional[str] = Query(None),
                         user: dict = Depends(get_current_user)):
@@ -863,6 +882,7 @@ def export_observations(source_type: Optional[str] = Query(None),
         uid = _scope_id(user)
     rows = _finalize(store.list_observations(source_type=source_type,
                                              user_id=uid,
+                                             tree_id=tree_id,
                                              from_date=from_date,
                                              to_date=to_date,
                                              limit=10000))
@@ -872,7 +892,7 @@ def export_observations(source_type: Optional[str] = Query(None),
     writer.writerow([
         "id", "observed_at", "source", "state", "health_score",
         "leaf_count", "fruit_count", "green_coverage", "water_stress",
-        "leaf_curl_index", "wrinkled_fruit_count", "farm",
+        "leaf_curl_index", "wrinkled_fruit_count", "tree_id", "farm",
     ])
     for o in rows:
         hs = o.get("health_state") or {}
@@ -893,6 +913,7 @@ def export_observations(source_type: Optional[str] = Query(None),
             o.get("water_stress") if o.get("water_stress") is not None else "",
             o.get("leaf_curl_index") if o.get("leaf_curl_index") is not None else "",
             o.get("wrinkled_fruit_count") or "",
+            o.get("tree_id") or "",
             (o.get("owner") or {}).get("farm_name") or "",
         ])
     content = "\ufeff" + buf.getvalue()  # BOM for Excel UTF-8

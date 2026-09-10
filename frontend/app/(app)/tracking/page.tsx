@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, FarmerRecord, Observation } from '@/lib/api';
+import { api, FarmerRecord, Observation, TreeRecord } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { healthJa, healthColor, TrendChart, StatePill } from '@/components/charts';
 import { PageHeader } from '@/components/PageHeader';
@@ -67,6 +67,8 @@ export default function TrackingPage() {
   const [toDate, setToDate] = useState('');
   const [farmers, setFarmers] = useState<FarmerRecord[]>([]);
   const [farmerId, setFarmerId] = useState<number | null>(null);
+  const [trees, setTrees] = useState<TreeRecord[]>([]);
+  const [treeId, setTreeId] = useState<string | null>(null);
 
   // bulk selection
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -74,13 +76,14 @@ export default function TrackingPage() {
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [confirmSingle, setConfirmSingle] = useState<Observation | null>(null);
 
-  const load = useCallback(async (fid: number | null, fd: string, td: string, src: SourceFilter) => {
+  const load = useCallback(async (fid: number | null, fd: string, td: string, src: SourceFilter, tid?: string | null) => {
     setLoading(true);
     try {
       const data = await api.observations(undefined, fid ?? undefined, {
         from_date: fd || undefined,
         to_date: td || undefined,
         source_type: src === 'all' ? undefined : src,
+        tree_id: tid || undefined,
       });
       setObs(data);
       setSelected((sel) => new Set([...sel].filter((id) => data.some((o) => o.id === id))));
@@ -95,6 +98,10 @@ export default function TrackingPage() {
   useEffect(() => {
     if (isAdmin) api.listFarmers().then(setFarmers).catch(() => {});
   }, [isAdmin]);
+
+  useEffect(() => {
+    api.listTrees().then(setTrees).catch(() => setTrees([]));
+  }, []);
 
   // Admins see every farmer merged into one trend otherwise; default to the
   // farmer with the most recent observation so the chart plots like a farmer's.
@@ -116,8 +123,8 @@ export default function TrackingPage() {
   }, [isAdmin, farmerId, obs]);
 
   useEffect(() => {
-    load(farmerId, fromDate, toDate, sourceFilter);
-  }, [load, farmerId, fromDate, toDate, sourceFilter]);
+    load(farmerId, fromDate, toDate, sourceFilter, treeId);
+  }, [load, farmerId, fromDate, toDate, sourceFilter, treeId]);
 
   const sorted = useMemo(() => [...obs].sort((a, b) => b.id - a.id), [obs]);
 
@@ -209,6 +216,7 @@ export default function TrackingPage() {
         to_date: toDate || undefined,
         source_type: sourceFilter === 'all' ? undefined : sourceFilter,
         farmer_id: isAdmin ? farmerId ?? undefined : undefined,
+        tree_id: treeId || undefined,
       });
     } catch (e: any) {
       setError(e.message || 'エクスポートに失敗しました');
@@ -259,6 +267,20 @@ export default function TrackingPage() {
             <option value="image">画像（{sourceCounts.image}）</option>
           </select>
 
+          <select
+            value={treeId ?? ''}
+            onChange={(e) => setTreeId(e.target.value || null)}
+            className="input rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm"
+            aria-label="樹木で絞り込み"
+          >
+            <option value="">すべての樹木（{trees.length}件）</option>
+            {trees.map((t) => (
+              <option key={t.tree_id} value={t.tree_id}>
+                {t.tree_id}（{t.observation_count}件）
+              </option>
+            ))}
+          </select>
+
           <input
             type="text"
             value={search}
@@ -279,7 +301,7 @@ export default function TrackingPage() {
             <button
               onClick={() => {
                 setStateFilter('all'); setSourceFilter('all'); setSearch('');
-                setFromDate(''); setToDate(''); setFarmerId(null);
+                setFromDate(''); setToDate(''); setFarmerId(null); setTreeId(null);
               }}
               className="rounded-md border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500 hover:bg-neutral-50"
             >
@@ -422,7 +444,14 @@ export default function TrackingPage() {
                       <span className="block truncate text-sm font-medium text-neutral-800">
                         {o.filename || `観測 #${o.id}`}
                       </span>
-                      <span className="block text-xs text-neutral-400">{fmtDateTime(o.observed_at)}</span>
+                      <span className="mt-0.5 flex items-center gap-1.5">
+                        <span className="block text-xs text-neutral-400">{fmtDateTime(o.observed_at)}</span>
+                        {o.tree_id && (
+                          <span className="inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                            {o.tree_id}
+                          </span>
+                        )}
+                      </span>
                     </span>
                   </span>
 

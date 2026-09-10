@@ -145,6 +145,9 @@ class Store:
                 if name not in cols:
                     sqltype = "TEXT" if name == "source_type" else "INTEGER"
                     con.execute(f"ALTER TABLE observations ADD COLUMN {name} {sqltype}")
+            if "tree_id" not in cols:
+                con.execute("ALTER TABLE observations ADD COLUMN tree_id TEXT")
+                con.execute("CREATE INDEX IF NOT EXISTS idx_observations_tree ON observations(tree_id)")
             for table in ("videos", "images"):
                 vcols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
                 if "user_id" not in vcols:
@@ -571,10 +574,10 @@ class Store:
                 cur = con.execute(
                     "INSERT INTO observations "
                     "(user_id, video_id, image_id, source_type, timestamp_sec, label, observed_at, source, "
-                    " leaf_count, fruit_count, green_coverage, overall_health_score, "
+                    " tree_id, leaf_count, fruit_count, green_coverage, overall_health_score, "
                     " water_stress, leaf_curl_index, wrinkled_fruit_count, "
                     " result_json, annotated_path, raw_frame_path) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id,
                         video_id,
@@ -584,6 +587,7 @@ class Store:
                         rec.get("label"),
                         rec.get("observed_at", _now()),
                         rec.get("source", ""),
+                        rec.get("tree_id"),
                         rec.get("leaf_count"),
                         rec.get("fruit_count"),
                         rec.get("green_coverage"),
@@ -605,6 +609,7 @@ class Store:
                           image_id: Optional[int] = None,
                           source_type: Optional[str] = None,
                           user_id: Optional[int] = None,
+                          tree_id: Optional[str] = None,
                           from_date: Optional[str] = None,
                           to_date: Optional[str] = None,
                           limit: int = 500) -> list[dict]:
@@ -631,6 +636,9 @@ class Store:
             if user_id is not None:
                 where.append("o.user_id = ?")
                 params.append(user_id)
+            if tree_id:
+                where.append("o.tree_id = ?")
+                params.append(tree_id)
             if from_date:
                 where.append("o.observed_at >= ?")
                 params.append(from_date + "T00:00:00")
@@ -668,6 +676,25 @@ class Store:
             m = con.execute("SELECT COUNT(*) c FROM videos").fetchone()[0]
             i = con.execute("SELECT COUNT(*) c FROM images").fetchone()[0]
             return {"observations": n, "videos": m, "images": i}
+        finally:
+            con.close()
+
+    def list_trees(self, user_id: Optional[int] = None) -> list[dict]:
+        """Distinct tree ids (QR-recognised or manually assigned) for tracing."""
+        con = self._connect()
+        try:
+            sql = (
+                "SELECT tree_id, COUNT(*) AS observation_count, "
+                "MIN(observed_at) AS first_seen, MAX(observed_at) AS last_seen "
+                "FROM observations WHERE tree_id IS NOT NULL AND tree_id != ''"
+            )
+            params: list = []
+            if user_id is not None:
+                sql += " AND user_id = ?"
+                params.append(user_id)
+            sql += " GROUP BY tree_id ORDER BY last_seen DESC, tree_id ASC"
+            rows = con.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
         finally:
             con.close()
 

@@ -86,6 +86,8 @@ export default function Dashboard() {
   const [running, setRunning] = useState<number | null>(null);
   const [timeSpec, setTimeSpec] = useState<Record<number, string>>({});
   const [soilInputs, setSoilInputs] = useState<Record<number, SoilMoistureInput | undefined>>({});
+  const [treeIdInputs, setTreeIdInputs] = useState<Record<number, string>>({});
+  const [droneModes, setDroneModes] = useState<Record<number, boolean>>({});
   const [soilStatus, setSoilStatus] = useState<SoilStatus | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -205,7 +207,8 @@ export default function Dashboard() {
     if (files.length) handleFiles(files);
   };
 
-  const runAnalysis = async (video: Video, customTimes?: string, soil?: SoilMoistureInput) => {
+  const runAnalysis = async (video: Video, customTimes?: string, soil?: SoilMoistureInput,
+                              treeId?: string, droneMode?: boolean) => {
     setError(null);
     setRunning(video.id);
     try {
@@ -228,7 +231,7 @@ export default function Dashboard() {
           times = [0, 1, 2, 3, 4];
         }
       }
-      await api.analyseTimes(video.id, times, soil);
+      await api.analyseTimes(video.id, times, soil, treeId, droneMode);
       setSelected(video.id);
     } catch (e: any) {
       setError(e.message || '解析の開始に失敗しました');
@@ -238,7 +241,8 @@ export default function Dashboard() {
   };
 
   const runAnalysisWithSoil = (video: Video, custom?: string) =>
-    runAnalysis(video, custom, soilInputs[video.id]);
+    runAnalysis(video, custom, soilInputs[video.id],
+      treeIdInputs[video.id]?.trim() || undefined, droneModes[video.id] ?? false);
 
   const selectVideo = (id: number) => {
     setSelected((cur) => (cur === id ? null : id));
@@ -737,6 +741,10 @@ export default function Dashboard() {
                       running={running === v.id}
                       soil={soilInputs[v.id]}
                       onSoilChange={(val) => setSoilInputs((prev) => ({ ...prev, [v.id]: val }))}
+                      treeId={treeIdInputs[v.id] || ''}
+                      onTreeIdChange={(val) => setTreeIdInputs((prev) => ({ ...prev, [v.id]: val }))}
+                      droneMode={droneModes[v.id] ?? false}
+                      onDroneModeChange={(val) => setDroneModes((prev) => ({ ...prev, [v.id]: val }))}
                     />
                     <div className="mt-4">
                       <ObservationTable obs={obsByVideo[v.id] || []} error={obsErrors[v.id]} />
@@ -1024,6 +1032,10 @@ function AnalyseControls({
   running,
   soil,
   onSoilChange,
+  treeId,
+  onTreeIdChange,
+  droneMode,
+  onDroneModeChange,
 }: {
   video: Video;
   timeSpec: string;
@@ -1032,6 +1044,10 @@ function AnalyseControls({
   running: boolean;
   soil?: SoilMoistureInput;
   onSoilChange: (val: SoilMoistureInput | undefined) => void;
+  treeId?: string;
+  onTreeIdChange: (val: string) => void;
+  droneMode?: boolean;
+  onDroneModeChange: (val: boolean) => void;
 }) {
   const defaultHint =
     video.duration_sec && video.duration_sec > 0
@@ -1061,7 +1077,25 @@ function AnalyseControls({
         </div>
         <p className="mt-1.5 text-xs text-neutral-400">{defaultHint}</p>
       </div>
-      <SoilInputPanel onChange={onSoilChange} />
+      <div className="mt-2.5 space-y-2">
+          <input
+            type="text"
+            value={treeId}
+            onChange={(e) => onTreeIdChange(e.target.value)}
+            placeholder="樹木ID（例: 第3試験樹・空欄でQR自動認識）"
+            className="input w-full"
+          />
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-600">
+            <input
+              type="checkbox"
+              checked={droneMode ?? false}
+              onChange={(e) => onDroneModeChange(e.target.checked)}
+              className="h-4 w-4 rounded"
+            />
+            ドローン撮影（低解像度・上空からの動画）
+          </label>
+        </div>
+        <SoilInputPanel onChange={onSoilChange} />
       {soil && (
         <p className="text-xs text-neutral-500">
           土壌水分データを添付して解析します。
