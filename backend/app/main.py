@@ -49,6 +49,61 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("olive-msystem")
 
 
+# ---- Sensor offline monitor (background thread) ---------------------------
+import threading, time as _time
+from datetime import datetime as _dt
+
+_sensor_last_notified: Optional[_dt] = None
+_SENSOR_CHECK_INTERVAL = 3600  # check every 1 hour
+_SENSOR_STALE_HOURS = 6        # consider offline after 6h without data
+_SENSOR_NOTIFY_COOLDOWN = 86400  # notify at most once per 24h
+
+
+def _sensor_monitor_loop():
+    """Background thread: checks sensor freshness and sends daily notifications."""
+    global _sensor_last_notified
+    while True:
+        _time.sleep(_SENSOR_CHECK_INTERVAL)
+        try:
+            from .soil_moisture import build_soil_data, _parse_api_ts
+            data = build_soil_data(None)
+            sm = data.get("soil_moisture", {})
+            measured = sm.get("measured_at")
+            if not measured:
+                continue
+            ts = _parse_api_ts(measured)
+            if ts is None:
+                continue
+            now = _dt.utcnow().replace(tzinfo=ts.tzinfo) if ts.tzinfo else _dt.utcnow()
+            age_hours = (now - ts).total_seconds() / 3600
+            if age_hours < _SENSOR_STALE_HOURS:
+                continue  # sensor is online, no action needed
+
+            # Sensor is offline — send notification once per day
+            now_naive = _dt.utcnow()
+            if _sensor_last_notified is not None:
+                since_last = (now_naive - _sensor_last_notified).total_seconds()
+                if since_last < _SENSOR_NOTIFY_COOLDOWN:
+                    continue  # already notified recently
+
+            kit_id = sm.get("kit_id", "unknown")
+            age_int = int(age_hours)
+            title = "土壌水分センサー停止通知"
+            body = (
+                f"センサー（{kit_id}）のデータが {age_int} 時間以上更新されていません。"
+                f"最終更新: {measured}。物理的な確認をお勧めします。"
+            )
+            store.add_notification(title, body, created_by=0, target_role="all")
+            _sensor_last_notified = now_naive
+            logger.warning("sensor offline notification sent: %s (age %dh)", kit_id, age_int)
+        except Exception:
+            logger.exception("sensor monitor error")
+
+
+_sensor_thread = threading.Thread(target=_sensor_monitor_loop, daemon=True)
+_sensor_thread.start()
+
+
 def _seed_admin() -> None:
     """Ensure an admin account exists with a safe password.
 
