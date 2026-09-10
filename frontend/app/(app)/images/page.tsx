@@ -37,7 +37,6 @@ export default function ImageAnalysisPage() {
   const [runProgress, setRunProgress] = useState<{ imageId: number; startTime: number; estSeconds: number } | null>(null);
   const [results, setResults] = useState<Record<number, Observation>>({});
   const [comparisonResults, setComparisonResults] = useState<Record<number, Observation>>({});
-  const [compareView, setCompareView] = useState<Record<number, 'upscaled' | 'original'>>({});
   const [soilInputs, setSoilInputs] = useState<Record<number, SoilMoistureInput | undefined>>({});
   const [treeInputs, setTreeInputs] = useState<Record<number, string>>({});
   const [droneFlags, setDroneFlags] = useState<Record<number, boolean>>({});
@@ -137,11 +136,9 @@ export default function ImageAnalysisPage() {
       // Handle comparison results (non-upscaled pass)
       if (data?.observations && data.observations.length === 2) {
         setComparisonResults((prev) => ({ ...prev, [img.id]: data.observations[1] }));
-        setCompareView((prev) => ({ ...prev, [img.id]: 'upscaled' }));
       } else {
         // Clear any previous comparison if not in compare mode
         setComparisonResults((prev) => { const n = { ...prev }; delete n[img.id]; return n; });
-        setCompareView((prev) => { const n = { ...prev }; delete n[img.id]; return n; });
       }
       setExpanded(img.id);
       await load();
@@ -240,10 +237,9 @@ export default function ImageAnalysisPage() {
             {shown.map((img) => {
               const res = results[img.id];
               const compRes = comparisonResults[img.id];
-              const activeView = compareView[img.id] ?? 'upscaled';
-              const activeRes = activeView === 'original' && compRes ? compRes : res;
               const open = expanded === img.id;
-              const annotatedUrl = (activeRes?.result?.['_frame_annotated_url'] as string) || null;
+              const annotatedUrl = (res?.result?.['_frame_annotated_url'] as string) || null;
+              const compAnnotatedUrl = (compRes?.result?.['_frame_annotated_url'] as string) || null;
               return (
                 <div key={img.id} className="card">
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -252,12 +248,22 @@ export default function ImageAnalysisPage() {
                       className="flex min-w-0 flex-1 items-center gap-3 text-left"
                     >
                       {annotatedUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={annotatedUrl}
-                          alt="解析結果"
-                          className="h-11 w-16 shrink-0 rounded-md object-cover ring-1 ring-neutral-200"
-                        />
+                        <div className="flex shrink-0 gap-0.5">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={annotatedUrl}
+                            alt="拡大解析結果"
+                            className="h-11 w-16 rounded-md object-cover ring-1 ring-violet-200"
+                          />
+                          {compAnnotatedUrl && (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={compAnnotatedUrl}
+                              alt="元画像解析結果"
+                              className="h-11 w-16 rounded-md object-cover ring-1 ring-neutral-200"
+                            />
+                          )}
+                        </div>
                       ) : (
                         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-neutral-100 text-neutral-600">
                           <IconImage size={20} />
@@ -344,33 +350,43 @@ export default function ImageAnalysisPage() {
                           <AnalysisProgress elapsed={elapsed} estSeconds={runProgress.estSeconds} />
                         )}
                         {!running && res ? (
-                          <div>
-                            {/* Comparison tabs when both versions exist */}
-                            {compRes && (
-                              <div className="mb-3 flex gap-1 rounded-lg bg-neutral-100 p-1">
-                                <button
-                                  onClick={() => setCompareView((prev) => ({ ...prev, [img.id]: 'upscaled' }))}
-                                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                                    (compareView[img.id] ?? 'upscaled') === 'upscaled'
-                                      ? 'bg-violet-600 text-white shadow'
-                                      : 'text-neutral-600 hover:text-neutral-800'
-                                  }`}
-                                >
-                                  拡大版（AI upscale）
-                                </button>
-                                <button
-                                  onClick={() => setCompareView((prev) => ({ ...prev, [img.id]: 'original' }))}
-                                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                                    compareView[img.id] === 'original'
-                                      ? 'bg-neutral-700 text-white shadow'
-                                      : 'text-neutral-600 hover:text-neutral-800'
-                                  }`}
-                                >
-                                  元画像（upscalなし）
-                                </button>
-                              </div>
+                          <div className="space-y-4">
+                            {compRes ? (
+                              <>
+                                {/* Side-by-side images */}
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-2">
+                                    <p className="mb-1.5 text-center text-[10px] font-semibold text-violet-700">拡大版（AI upscale）</p>
+                                    {res.result?.['_frame_annotated_url'] && (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img src={res.result['_frame_annotated_url'] as string} alt="拡大解析結果" className="w-full rounded-md object-contain" />
+                                    )}
+                                  </div>
+                                  <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
+                                    <p className="mb-1.5 text-center text-[10px] font-semibold text-neutral-600">元画像（upscaleなし）</p>
+                                    {compRes.result?.['_frame_annotated_url'] && (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img src={compRes.result['_frame_annotated_url'] as string} alt="元画像解析結果" className="w-full rounded-md object-contain" />
+                                    )}
+                                  </div>
+                                </div>
+                                {/* Side-by-side comparison metrics */}
+                                <ComparisonMetrics upscaled={res} original={compRes} />
+                                {/* Side-by-side ObservationDetail */}
+                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                  <div>
+                                    <h4 className="mb-2 text-xs font-semibold text-violet-700">拡大版の解析結果</h4>
+                                    <ObservationDetail obs={res} />
+                                  </div>
+                                  <div>
+                                    <h4 className="mb-2 text-xs font-semibold text-neutral-600">元画像の解析結果</h4>
+                                    <ObservationDetail obs={compRes} />
+                                  </div>
+                                </div>
+                              </>
+                            ) : (
+                              <ObservationDetail obs={res} />
                             )}
-                            <ObservationDetail obs={(compareView[img.id] ?? 'upscaled') === 'original' ? compRes! : res} />
                           </div>
                         ) : !running && !res ? (
                           <div className="rounded-lg border border-dashed border-neutral-200 p-6 text-center text-sm text-neutral-400">
@@ -450,6 +466,63 @@ function AnalysisProgress({ elapsed, estSeconds }: { elapsed: number; estSeconds
       <div className="mt-1 text-xs text-olive-500 text-center">
         画像サイズに応じて数秒〜数十秒かかります
       </div>
+    </div>
+  );
+}
+
+/**
+ * Side-by-side comparison of key metrics between upscaled and original analyses.
+ */
+function ComparisonMetrics({ upscaled, original }: { upscaled: Observation; original: Observation }) {
+  const uRes = (upscaled.result || {}) as Record<string, any>;
+  const oRes = (original.result || {}) as Record<string, any>;
+  const uHs = upscaled.health_state;
+  const oHs = original.health_state;
+
+  const rows: { label: string; upVal: string; origVal: string }[] = [
+    {
+      label: '健康スコア',
+      upVal: uHs?.score != null ? `${(uHs.score * 100).toFixed(0)}%` : '-',
+      origVal: oHs?.score != null ? `${(oHs.score * 100).toFixed(0)}%` : '-',
+    },
+    {
+      label: '葉数',
+      upVal: String(upscaled.leaf_count ?? uRes.leaf_count ?? '-'),
+      origVal: String(original.leaf_count ?? oRes.leaf_count ?? '-'),
+    },
+    {
+      label: '果実数',
+      upVal: String(upscaled.fruit_count ?? uRes.fruit_count ?? '-'),
+      origVal: String(original.fruit_count ?? oRes.fruit_count ?? '-'),
+    },
+    {
+      label: '緑度',
+      upVal: upscaled.green_coverage != null ? `${upscaled.green_coverage.toFixed(1)}%` : (uRes.green_coverage != null ? `${uRes.green_coverage.toFixed(1)}%` : '-'),
+      origVal: original.green_coverage != null ? `${original.green_coverage.toFixed(1)}%` : (oRes.green_coverage != null ? `${oRes.green_coverage.toFixed(1)}%` : '-'),
+    },
+  ];
+
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+      <p className="mb-2 text-xs font-semibold text-neutral-500">解析結果の比較</p>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-neutral-400">
+            <th className="pb-1 pr-2 text-left font-medium">指標</th>
+            <th className="pb-1 px-2 text-right font-medium text-violet-700">拡大版</th>
+            <th className="pb-1 pl-2 text-right font-medium text-neutral-600">元画像</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label} className="border-t border-neutral-100">
+              <td className="py-1 pr-2 text-neutral-600">{r.label}</td>
+              <td className="py-1 px-2 text-right tabular-nums text-violet-700">{r.upVal}</td>
+              <td className="py-1 pl-2 text-right tabular-nums text-neutral-700">{r.origVal}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
