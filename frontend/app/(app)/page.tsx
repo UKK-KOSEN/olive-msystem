@@ -942,11 +942,17 @@ function SoilStatusCard({ status }: { status: SoilStatus }) {
       ? { label: '自動取得', cls: 'bg-health-good/10 text-health-good' }
       : status.source === 'manual'
       ? { label: '手動入力', cls: 'bg-olive-50 text-olive-700' }
+      : status.source === 'error'
+      ? { label: 'APIエラー', cls: 'bg-health-danger/10 text-health-danger' }
       : { label: '未設定', cls: 'bg-neutral-100 text-neutral-500' };
   const measured = sm.measured_at ? formatMeasuredAt(sm.measured_at) : null;
 
+  const ageH = status.data_age_hours;
+  const stale = ageH != null && ageH >= 6;
+  const veryStale = ageH != null && ageH >= 24;
+
   return (
-    <section className="card mb-6 flex flex-wrap items-center gap-x-8 gap-y-3">
+    <section className={`card mb-6 flex flex-wrap items-center gap-x-8 gap-y-3 ${veryStale ? 'border-health-danger/40' : stale ? 'border-health-caution/40' : ''}`}>
       <div className="flex items-center gap-3">
         <span className="grid h-10 w-10 place-items-center rounded-lg bg-neutral-100 text-neutral-600">
           <IconDroplet size={20} />
@@ -956,6 +962,11 @@ function SoilStatusCard({ status }: { status: SoilStatus }) {
           <div className="flex items-center gap-2">
             <span className={`badge ${source.cls}`}>{source.label}</span>
             {measured && <span className="text-[11px] text-neutral-400">{measured}ごろ</span>}
+            {status.sensor_online === false && status.source === 'api' && (
+              <span className="badge bg-health-danger/10 text-health-danger text-[11px]">
+                センサー停止中
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -967,6 +978,17 @@ function SoilStatusCard({ status }: { status: SoilStatus }) {
         <div className="ml-auto text-sm text-neutral-600">
           <span className="text-xs text-neutral-400">判定: </span>
           {h.message}
+        </div>
+      )}
+      {stale && (
+        <div className="w-full mt-1 rounded-lg px-3 py-2 text-xs bg-health-caution/10 text-health-caution">
+          データが{ageH != null ? `${Math.round(ageH)}時間` : ''}前に更新されています。センサーがオフラインの可能性があります。
+          {veryStale && ' 物理的な確認をお勧めします。'}
+        </div>
+      )}
+      {status.error && (
+        <div className="w-full mt-1 rounded-lg px-3 py-2 text-xs bg-health-danger/10 text-health-danger">
+          API エラー: {status.error}
         </div>
       )}
     </section>

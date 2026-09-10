@@ -88,6 +88,21 @@ class SoilMoistureFetcher:
     timeout: float = 10
     max_retries: int = 3
     _cache: dict = field(default_factory=dict)
+    # --- access monitoring counters (class-level, shared) ---
+    _req_count: int = 0
+    _err_count: int = 0
+    _last_req_at: Optional[str] = None
+    _last_err_at: Optional[str] = None
+    _last_err_msg: Optional[str] = None
+
+    def get_access_stats(self) -> dict:
+        return {
+            "request_count": self._req_count,
+            "error_count": self._err_count,
+            "last_request_at": self._last_req_at,
+            "last_error_at": self._last_err_at,
+            "last_error_msg": self._last_err_msg,
+        }
 
     def _get(self, endpoint: str, params: Optional[dict] = None) -> Any:
         if not self.api_key:
@@ -112,6 +127,8 @@ class SoilMoistureFetcher:
         for attempt in range(self.max_retries):
             req = urllib.request.Request(url, headers=headers, method="GET")
             try:
+                self._req_count += 1
+                self._last_req_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     self._cache[key] = (time.time(), data)
@@ -121,11 +138,17 @@ class SoilMoistureFetcher:
                     wait = float(e.headers.get("Retry-After", "1") or 1)
                     time.sleep(min(wait, 10))
                     continue
+                self._err_count += 1
+                self._last_err_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                self._last_err_msg = f"HTTP {e.code}: {e.reason}"
                 raise RuntimeError(f"API error {e.code}: {e.reason}") from e
             except urllib.error.URLError as e:
                 if attempt < self.max_retries - 1:
                     time.sleep(0.5)
                     continue
+                self._err_count += 1
+                self._last_err_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                self._last_err_msg = f"Network: {e.reason}"
                 raise RuntimeError(f"Network error: {e.reason}") from e
         raise RuntimeError("soil moisture API request failed")
 
@@ -212,7 +235,11 @@ def _load_auto_config() -> Optional[dict]:
         return {}
 
 
+_active_fetcher: Optional[SoilMoistureFetcher] = None
+
+
 def _make_fetcher(config: Optional[dict]) -> SoilMoistureFetcher:
+    global _active_fetcher
     config = config or {}
     # Prefer SOIL_API_KEY env var (official recommendation) over the yaml key,
     # so the secret never needs to be committed to the repository.
@@ -220,13 +247,21 @@ def _make_fetcher(config: Optional[dict]) -> SoilMoistureFetcher:
     env_key = os.environ.get("SOIL_API_KEY") or ""
     if env_key:
         api_key = env_key
-    return SoilMoistureFetcher(
+    _active_fetcher = SoilMoistureFetcher(
         base_url=config.get("api_base_url", DEFAULT_BASE_URL),
         api_key=api_key,
         default_kit_id=config.get("default_kit_id", "default"),
         timeout=float(config.get("timeout", 10)),
         max_retries=int(config.get("max_retries", 3)),
     )
+    return _active_fetcher
+
+
+def get_fetcher_stats() -> dict:
+    """Return API access monitoring stats from the active fetcher."""
+    if _active_fetcher is None:
+        return {"request_count": 0, "error_count": 0, "last_request_at": None, "last_error_at": None, "last_error_msg": None}
+    return _active_fetcher.get_access_stats()
 
 
 def _import_olive_soil():

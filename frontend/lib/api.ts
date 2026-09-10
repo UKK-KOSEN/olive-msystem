@@ -110,11 +110,23 @@ export interface SoilMoistureData {
   health?: SoilMoistureHealth;
 }
 
+export interface SoilAccessStats {
+  request_count: number;
+  error_count: number;
+  last_request_at: string | null;
+  last_error_at: string | null;
+  last_error_msg: string | null;
+}
+
 export interface SoilStatus {
-  source: 'api' | 'manual' | 'none';
+  source: 'api' | 'manual' | 'none' | 'error';
   configured: boolean;
   soil_moisture: SoilMoistureData;
   health: SoilMoistureHealth;
+  sensor_online: boolean;
+  data_age_hours: number | null;
+  api: SoilAccessStats;
+  error?: string;
 }
 
 export interface HealthThresholds {
@@ -148,12 +160,37 @@ export interface AdminStats {
   };
 }
 
+export interface FeatureArchitecture {
+  components: ComponentInfo[];
+  dataFlows: DataFlow[];
+  apiEndpoints: ApiEndpointGroup[];
+}
+
+export interface ComponentInfo {
+  name: string;
+  tech: string;
+  description: string;
+  port?: string;
+}
+
+export interface DataFlow {
+  from: string;
+  to: string;
+  description: string;
+}
+
+export interface ApiEndpointGroup {
+  group: string;
+  endpoints: { path: string; method: string; description: string }[];
+}
+
 export interface VersionInfo {
   olive_msystem: { frontend: string; backend: string };
   olive_p: string | null;
   python: string;
   platform: string;
   dependencies: Record<string, string | null>;
+  architecture: FeatureArchitecture;
 }
 
 export interface AuthUser {

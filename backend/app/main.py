@@ -130,6 +130,94 @@ def api_versions():
         except Exception:
             pass
 
+    # Soil moisture config info
+    soil_cfg = {}
+    if SOIL_MOISTURE_CONFIG_PATH.exists():
+        try:
+            import yaml as _yaml
+            raw = _yaml.safe_load(SOIL_MOISTURE_CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                soil_cfg = {
+                    "kit_id": raw.get("default_kit_id", "unknown"),
+                    "configured": True,
+                }
+        except Exception:
+            soil_cfg = {"configured": True}
+
+    architecture = {
+        "components": [
+            {"name": "フロントエンド", "tech": "Next.js 15 (React)", "description": "ダッシュボード・動画・画像・カレンダー・推移・通知などのUI", "port": "3001"},
+            {"name": "バックエンド", "tech": "FastAPI (Python)", "description": "REST API・認証・動画解析キュー・土壌水分統合・ユーザー管理", "port": "8000"},
+            {"name": "解析エンジン (olive-p)", "tech": "Python + OpenCV", "description": "動画フレーム抽出・オリーブ検出・健康状態判定・土壌水分評価統合"},
+            {"name": "土壌水分センサー", "tech": "UKK-KOSEN D1 API", "description": "小豆島フィールドの土壌水分・温度・湿度をCloudflare経由で取得",
+             **({"kit_id": soil_cfg.get("kit_id")} if soil_cfg.get("kit_id") else {})},
+            {"name": "データベース", "tech": "SQLite", "description": "観測・動画・画像・ユーザー・通知データを永続化"},
+        ],
+        "dataFlows": [
+            {"from": "ユーザー", "to": "フロントエンド", "description": "動画/画像をアップロードし、解析を依頼"},
+            {"from": "フロントエンド", "to": "バックエンド", "description": "REST API経由で動画解析・データ取得・設定変更"},
+            {"from": "バックエンド", "to": "olive-p", "description": "動画フレームの解析をオフロード"},
+            {"from": "olive-p", "to": "バックエンド", "description": "検出結果（検出数・健康スコア・土壌水分）を返す"},
+            {"from": "バックエンド", "to": "UKK-KOSEN API", "description": "土壌水分センサーデータをBearer認証で取得"},
+            {"from": "バックエンド", "to": "SQLite", "description": "観測・動画・画像・ユーザー情報を保存"},
+            {"from": "バックエンド", "to": "ユーザー", "description": "体調スコア・アドバイス・通知を返す"},
+        ],
+        "apiEndpoints": [
+            {"group": "認証", "endpoints": [
+                {"path": "/api/auth/login", "method": "POST", "description": "JWTトークン取得"},
+                {"path": "/api/auth/register", "method": "POST", "description": "新規ユーザー登録（農家）"},
+                {"path": "/api/auth/me", "method": "GET", "description": "ログイン中ユーザー情報"},
+                {"path": "/api/auth/profile", "method": "PUT", "description": "プロフィール更新"},
+                {"path": "/api/auth/preferences", "method": "GET/PUT", "description": "表示設定の取得/更新"},
+            ]},
+            {"group": "動画", "endpoints": [
+                {"path": "/api/videos", "method": "POST", "description": "動画アップロード"},
+                {"path": "/api/videos", "method": "GET", "description": "動画一覧"},
+                {"path": "/api/videos/{id}/analyse", "method": "POST", "description": "指定タイムスタンプで解析"},
+                {"path": "/api/videos/{id}/analyse-times", "method": "POST", "description": "時間文字列で解析"},
+                {"path": "/api/videos/{id}/observations", "method": "GET", "description": "動画の観測結果一覧"},
+                {"path": "/api/videos/jobs", "method": "GET", "description": "解析キューの状態"},
+                {"path": "/api/videos/{id}", "method": "DELETE", "description": "動画削除"},
+            ]},
+            {"group": "画像", "endpoints": [
+                {"path": "/api/images", "method": "POST", "description": "画像アップロード"},
+                {"path": "/api/images", "method": "GET", "description": "画像一覧"},
+                {"path": "/api/images/{id}/analyse", "method": "POST", "description": "画像解析実行"},
+                {"path": "/api/images/{id}/observations", "method": "GET", "description": "画像の観測結果"},
+                {"path": "/api/images/{id}", "method": "DELETE", "description": "画像削除"},
+            ]},
+            {"group": "観測・判定", "endpoints": [
+                {"path": "/api/observations", "method": "GET", "description": "観測一覧（農家は自分のみ）"},
+                {"path": "/api/observations", "method": "DELETE", "description": "観測一括削除"},
+                {"path": "/api/observations/export", "method": "GET", "description": "CSV/JSONエクスポート"},
+                {"path": "/api/olive/status", "method": "GET", "description": "オリーブ体調ステータス（最新判定・推移）"},
+                {"path": "/api/calendar/observations", "method": "GET", "description": "カレンダー用観測データ"},
+            ]},
+            {"group": "土壌水分", "endpoints": [
+                {"path": "/api/soil-moisture/status", "method": "GET", "description": "センサー最新値・鮮度・API監視情報"},
+            ]},
+            {"group": "通知", "endpoints": [
+                {"path": "/api/notifications", "method": "GET", "description": "通知一覧"},
+                {"path": "/api/notifications/unread-count", "method": "GET", "description": "未読数"},
+                {"path": "/api/notifications/{id}/read", "method": "POST", "description": "既読化"},
+                {"path": "/api/notifications/{id}", "method": "DELETE", "description": "通知削除"},
+            ]},
+            {"group": "管理者", "endpoints": [
+                {"path": "/api/admin/stats", "method": "GET", "description": "ダッシュボード統計"},
+                {"path": "/api/admin/farmers", "method": "GET", "description": "農家一覧"},
+                {"path": "/api/admin/farmers/{id}", "method": "PUT", "description": "農家情報更新"},
+                {"path": "/api/admin/farmers/{id}/password", "method": "PUT", "description": "農家パスワード変更"},
+                {"path": "/api/admin/settings", "method": "GET/PUT", "description": "判定しきい値・サイト設定"},
+                {"path": "/api/admin/soil-config/test", "method": "POST", "description": "土壌水分API接続テスト"},
+                {"path": "/api/admin/soil-config", "method": "PUT", "description": "土壌水分設定更新"},
+                {"path": "/api/admin/videos/{id}", "method": "DELETE", "description": "動画削除（管理者権限）"},
+                {"path": "/api/admin/images/{id}", "method": "DELETE", "description": "画像削除（管理者権限）"},
+                {"path": "/api/admin/observations/{id}", "method": "DELETE", "description": "観測削除（管理者権限）"},
+                {"path": "/api/admin/observations/clear", "method": "POST", "description": "観測全削除（管理者権限）"},
+            ]},
+        ],
+    }
+
     return {
         "olive_msystem": {
             "frontend": "1.0.0",
@@ -146,6 +234,7 @@ def api_versions():
             "numpy": numpy.__version__,
             "yaml": pkg("PyYAML"),
         },
+        "architecture": architecture,
     }
 
 
@@ -520,7 +609,9 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
 # --------------------------------------------------------------------------
 @app.get("/api/soil-moisture/status")
 def soil_moisture_status():
-    """Report whether automatic soil moisture is available and the latest value."""
+    """Report whether automatic soil moisture is available, the latest value,
+    sensor staleness and API access monitoring stats."""
+    from .soil_moisture import get_fetcher_stats, _parse_api_ts
     try:
         data = build_soil_data(None)
     except Exception as exc:
@@ -530,12 +621,30 @@ def soil_moisture_status():
             "soil_moisture": {},
             "health": {},
             "error": str(exc),
+            "sensor_online": False,
+            "data_age_hours": None,
+            "api": get_fetcher_stats(),
         }
+    # Compute data freshness
+    sm = data.get("soil_moisture", {})
+    measured = sm.get("measured_at")
+    age_hours = None
+    sensor_online = False
+    if measured:
+        ts = _parse_api_ts(measured)
+        if ts:
+            from datetime import datetime as _dt
+            now = _dt.utcnow().replace(tzinfo=ts.tzinfo) if ts.tzinfo else _dt.utcnow()
+            age_hours = round((now - ts).total_seconds() / 3600, 1)
+            sensor_online = age_hours < 6  # sensor is "online" if data < 6h old
     return {
         "source": data.get("source", "none"),
         "configured": bool(SOIL_MOISTURE_CONFIG_PATH.exists()),
-        "soil_moisture": data.get("soil_moisture", {}),
+        "soil_moisture": sm,
         "health": data.get("health", {}),
+        "sensor_online": sensor_online,
+        "data_age_hours": age_hours,
+        "api": get_fetcher_stats(),
     }
 
 
