@@ -90,7 +90,7 @@ export default function VersionsPage() {
                   ユーザーの操作からデータがどのように流れ、最終的に体調判定が出力されるかを示します。
                 </p>
                 <div className="flex justify-center overflow-x-auto">
-                  <DataFlowSVG flows={arch.dataFlows} />
+                  <DataFlowSVG />
                 </div>
               </section>
 
@@ -278,369 +278,290 @@ export default function VersionsPage() {
 
 function SystemArchitectureSVG({ components }: { components: ComponentInfo[] }) {
   return (
-    <svg viewBox="0 0 720 420" className="w-full max-w-[720px]" xmlns="http://www.w3.org/2000/svg">
-      {/* Background */}
-      <rect width="720" height="420" fill="#fafaf8" rx="12" />
+    <svg viewBox="0 0 720 430" className="w-full max-w-[720px]" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="システム構成図">
+      {/* Clean white background — no decorative tint */}
+      <rect width="720" height="430" fill="#ffffff" />
 
-      {/* User */}
-      <g transform="translate(360, 40)">
-        <circle cx="0" cy="0" r="22" fill="#e8efe4" stroke="#6b8f5e" strokeWidth="2" />
-        <text x="0" y="5" textAnchor="middle" fontSize="20">👤</text>
-        <text x="0" y="38" textAnchor="middle" fontSize="11" fill="#4a5a42" fontWeight="600">ユーザー</text>
-      </g>
-
-      {/* Arrow: User -> Frontend */}
-      <line x1="360" y1="62" x2="360" y2="95" stroke="#8aa87a" strokeWidth="2" markerEnd="url(#arrowGreen)" />
-
-      {/* Frontend box */}
-      <g transform="translate(220, 95)">
-        <rect x="0" y="0" width="280" height="55" rx="8" fill="#f0f7ec" stroke="#7ba86a" strokeWidth="1.5" />
-        <text x="140" y="22" textAnchor="middle" fontSize="13" fill="#3d5a32" fontWeight="700">フロントエンド (Next.js)</text>
-        <text x="140" y="38" textAnchor="middle" fontSize="10" fill="#6b8f5e">ダッシュボード・動画・画像・カレンダー・推移・通知</text>
-      </g>
-
-      {/* Arrow: Frontend -> Backend */}
-      <line x1="360" y1="150" x2="360" y2="185" stroke="#8aa87a" strokeWidth="2" markerEnd="url(#arrowGreen)" />
-      <text x="372" y="172" fontSize="9" fill="#8aa87a">REST API</text>
-
-      {/* Backend box */}
-      <g transform="translate(160, 185)">
-        <rect x="0" y="0" width="400" height="65" rx="8" fill="#f0f7ec" stroke="#7ba86a" strokeWidth="1.5" />
-        <text x="200" y="22" textAnchor="middle" fontSize="13" fill="#3d5a32" fontWeight="700">バックエンド (FastAPI :8000)</text>
-        <text x="200" y="38" textAnchor="middle" fontSize="10" fill="#6b8f5e">認証・動画解析キュー・土壌水分統合・ユーザー管理</text>
-        <text x="200" y="52" textAnchor="middle" fontSize="9" fill="#95b588">センサー監視スレッド・通知自動送信</text>
-      </g>
-
-      {/* Arrow: Backend -> olive-p (left) */}
-      <line x1="240" y1="250" x2="120" y2="295" stroke="#8aa87a" strokeWidth="2" markerEnd="url(#arrowGreen)" />
-      <text x="155" y="275" fontSize="9" fill="#8aa87a">解析依頼</text>
-
-      {/* Arrow: olive-p -> Backend */}
-      <line x1="120" y1="295" x2="240" y2="250" stroke="#c9a84c" strokeWidth="1.5" strokeDasharray="4 3" markerEnd="url(#arrowGold)" />
-      <text x="155" y="290" fontSize="9" fill="#c9a84c">検出結果</text>
-
-      {/* olive-p box */}
-      <g transform="translate(20, 295)">
-        <rect x="0" y="0" width="200" height="55" rx="8" fill="#fdf6e8" stroke="#c9a84c" strokeWidth="1.5" />
-        <text x="100" y="22" textAnchor="middle" fontSize="12" fill="#7a6420" fontWeight="700">解析エンジン (olive-p)</text>
-        <text x="100" y="38" textAnchor="middle" fontSize="10" fill="#a08930">OpenCV・フレーム抽出・検出</text>
-      </g>
-
-      {/* Arrow: Backend -> Soil API (right) */}
-      <line x1="480" y1="250" x2="600" y2="295" stroke="#8aa87a" strokeWidth="2" markerEnd="url(#arrowGreen)" />
-      <text x="555" y="275" fontSize="9" fill="#8aa87a">Bearer認証</text>
-
-      {/* Arrow: Soil API -> Backend */}
-      <line x1="600" y1="295" x2="480" y2="250" stroke="#5b9bd5" strokeWidth="1.5" strokeDasharray="4 3" markerEnd="url(#arrowBlue)" />
-      <text x="555" y="290" fontSize="9" fill="#5b9bd5">センサーデータ</text>
-
-      {/* Soil API box */}
-      <g transform="translate(500, 295)">
-        <rect x="0" y="0" width="200" height="55" rx="8" fill="#e8f2fc" stroke="#5b9bd5" strokeWidth="1.5" />
-        <text x="100" y="22" textAnchor="middle" fontSize="12" fill="#2a5a8a" fontWeight="700">UKK-KOSEN API</text>
-        <text x="100" y="38" textAnchor="middle" fontSize="10" fill="#4a7ab0">Cloudflare D1・土壌水分</text>
-        <text x="100" y="52" textAnchor="middle" fontSize="9" fill="#7aa0c5">sensor1/2・気温・湿度</text>
-      </g>
-
-      {/* Arrow: Backend -> DB (bottom) */}
-      <line x1="360" y1="250" x2="360" y2="370" stroke="#8aa87a" strokeWidth="2" markerEnd="url(#arrowGreen)" />
-      <text x="372" y="315" fontSize="9" fill="#8aa87a">永続化</text>
-
-      {/* DB box */}
-      <g transform="translate(280, 370)">
-        <rect x="0" y="0" width="160" height="40" rx="8" fill="#f5f0fa" stroke="#9a7ab5" strokeWidth="1.5" />
-        <text x="80" y="18" textAnchor="middle" fontSize="12" fill="#5a3a7a" fontWeight="700">SQLite DB</text>
-        <text x="80" y="32" textAnchor="middle" fontSize="9" fill="#8a6aaa">観測・動画・画像・通知</text>
-      </g>
-
-      {/* Arrow: Backend -> Notification bell (right of DB) */}
-      <line x1="520" y1="250" x2="600" y2="380" stroke="#d4764e" strokeWidth="1.5" strokeDasharray="4 3" markerEnd="url(#arrowOrange)" />
-      <text x="580" y="320" fontSize="9" fill="#d4764e">通知送信</text>
-
-      {/* Notification bell */}
-      <g transform="translate(580, 370)">
-        <rect x="0" y="0" width="120" height="40" rx="8" fill="#fdf0eb" stroke="#d4764e" strokeWidth="1.5" />
-        <text x="60" y="18" textAnchor="middle" fontSize="12" fill="#8a4a2a" fontWeight="700">🔔 通知</text>
-        <text x="60" y="32" textAnchor="middle" fontSize="9" fill="#b06a3a">アラート・センサー停止</text>
-      </g>
-
-      {/* Arrow markers */}
       <defs>
-        <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#8aa87a" />
-        </marker>
-        <marker id="arrowGold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#c9a84c" />
-        </marker>
-        <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b9bd5" />
-        </marker>
-        <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#d4764e" />
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa298" />
         </marker>
       </defs>
+
+      {/* ===== top: user ===== */}
+      <g>
+        <rect x="315" y="18" width="90" height="34" rx="6" fill="#f2f2f0" stroke="#c9c9c4" strokeWidth="1" />
+        <text x="360" y="39" textAnchor="middle" fontSize="12.5" fill="#44443f" fontWeight="600">ユーザー</text>
+      </g>
+      <line x1="360" y1="52" x2="360" y2="78" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr)" />
+
+      {/* ===== frontend ===== */}
+      <g>
+        <rect x="220" y="80" width="280" height="44" rx="6" fill="#eef3ea" stroke="#6d8f5a" strokeWidth="1.2" />
+        <text x="360" y="99" textAnchor="middle" fontSize="13" fill="#3c5233" fontWeight="700">フロントエンド (Next.js)</text>
+        <text x="360" y="114" textAnchor="middle" fontSize="10" fill="#6d7f63">ページ UI・アップロード・グラフ描画</text>
+      </g>
+      <line x1="360" y1="124" x2="360" y2="150" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr)" />
+      <text x="369" y="141" fontSize="9.5" fill="#8a9288">REST API</text>
+
+      {/* ===== backend (center, wider) ===== */}
+      <g>
+        <rect x="180" y="152" width="360" height="56" rx="6" fill="#eef3ea" stroke="#6d8f5a" strokeWidth="1.2" />
+        <text x="360" y="174" textAnchor="middle" fontSize="13.5" fill="#3c5233" fontWeight="700">バックエンド (FastAPI :8000)</text>
+        <text x="360" y="190" textAnchor="middle" fontSize="10" fill="#6d7f63">認証 ・ 動画解析キュー ・ 土壌水分統合 ・ ユーザー管理</text>
+        <text x="360" y="203" textAnchor="middle" fontSize="9.5" fill="#8c9884">センサー監視スレッド ・ 通知自動送信</text>
+      </g>
+
+      {/* ===== left: olive-p ===== */}
+      <line x1="262" y1="208" x2="150" y2="250" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr)" />
+      <text x="196" y="226" fontSize="9.5" fill="#8a9288">解析依頼</text>
+      <line x1="150" y1="260" x2="262" y2="208" stroke="#9aa298" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arr)" />
+      <text x="196" y="262" fontSize="9.5" fill="#9a9980">検出結果</text>
+      <g>
+        <rect x="30" y="248" width="210" height="58" rx="6" fill="#f5f0e6" stroke="#b8a878" strokeWidth="1.1" />
+        <text x="135" y="270" textAnchor="middle" fontSize="12.5" fill="#5d5438" fontWeight="700">解析エンジン (olive-p)</text>
+        <text x="135" y="286" textAnchor="middle" fontSize="9.5" fill="#8a7f5e">OpenCV ・ フレーム抽出 ・ 検出</text>
+        <text x="135" y="299" textAnchor="middle" fontSize="9" fill="#a89a78">葉数・実数・健康特徴</text>
+      </g>
+
+      {/* ===== right: soil API ===== */}
+      <line x1="458" y1="208" x2="570" y2="250" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr)" />
+      <text x="524" y="226" fontSize="9.5" fill="#8a9288">Bearer 認証</text>
+      <line x1="570" y1="260" x2="458" y2="208" stroke="#9aa298" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arr)" />
+      <text x="524" y="262" fontSize="9.5" fill="#7d8ea0">センサーデータ</text>
+      <g>
+        <rect x="480" y="248" width="210" height="58" rx="6" fill="#edf1f5" stroke="#8a9db0" strokeWidth="1.1" />
+        <text x="585" y="270" textAnchor="middle" fontSize="12.5" fill="#405d74" fontWeight="700">土壌水分 API (外部)</text>
+        <text x="585" y="286" textAnchor="middle" fontSize="9.5" fill="#6a7f92">Cloudflare D1 ・ UKK-KOSEN</text>
+        <text x="585" y="299" textAnchor="middle" fontSize="9" fill="#8a9cb0">sensor1/2 ・ 気温 ・ 湿度</text>
+      </g>
+
+      {/* ===== bottom: DB + notifications ===== */}
+      <line x1="360" y1="208" x2="360" y2="360" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr)" />
+      <text x="369" y="300" fontSize="9.5" fill="#8a9288">保存 / 参照</text>
+      <g>
+        <rect x="250" y="362" width="220" height="42" rx="6" fill="#f3f1f6" stroke="#a89db8" strokeWidth="1.1" />
+        <text x="360" y="382" textAnchor="middle" fontSize="12.5" fill="#5c5470" fontWeight="700">SQLite データベース</text>
+        <text x="360" y="397" textAnchor="middle" fontSize="9.5" fill="#8a8498">観測 ・ 動画 ・ 画像 ・ 通知</text>
+      </g>
+
+      <line x1="480" y1="208" x2="590" y2="362" stroke="#9aa298" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arr)" />
+      <text x="556" y="290" fontSize="9.5" fill="#8a9288">通知送信</text>
+      <g>
+        <rect x="500" y="362" width="180" height="42" rx="6" fill="#fbf1ec" stroke="#c48a68" strokeWidth="1.1" />
+        <text x="590" y="382" textAnchor="middle" fontSize="12.5" fill="#7d4a2e" fontWeight="700">通知</text>
+        <text x="590" y="397" textAnchor="middle" fontSize="9.5" fill="#a87858">体調アラート ・ センサー停止</text>
+      </g>
     </svg>
   );
 }
 
-function DataFlowSVG({ flows }: { flows: DataFlow[] }) {
+function DataFlowSVG() {
   const steps = [
-    { label: 'ユーザー', icon: '👤', color: '#e8efe4', border: '#6b8f5e' },
-    { label: 'フロント', icon: '🖥️', color: '#f0f7ec', border: '#7ba86a' },
-    { label: 'バックエンド', icon: '⚙️', color: '#f0f7ec', border: '#7ba86a' },
-    { label: 'olive-p', icon: '🔍', color: '#fdf6e8', border: '#c9a84c' },
-    { label: 'UKK API', icon: '📡', color: '#e8f2fc', border: '#5b9bd5' },
-    { label: 'SQLite', icon: '💾', color: '#f5f0fa', border: '#9a7ab5' },
+    { label: 'ユーザー', color: '#f2f2f0', border: '#c9c9c4', sub: '操作入力' },
+    { label: 'フロント', color: '#eef3ea', border: '#6d8f5a', sub: 'リクエスト' },
+    { label: 'バックエンド', color: '#eef3ea', border: '#6d8f5a', sub: '処理・統合' },
+    { label: 'olive-p', color: '#f5f0e6', border: '#b8a878', sub: '画像解析' },
+    { label: '外部API', color: '#edf1f5', border: '#8a9db0', sub: '土壌水分' },
+    { label: 'SQLite', color: '#f3f1f6', border: '#a89db8', sub: '永続化' },
   ];
 
   return (
-    <svg viewBox="0 0 720 160" className="w-full max-w-[720px]" xmlns="http://www.w3.org/2000/svg">
-      <rect width="720" height="160" fill="#fafaf8" rx="12" />
+    <svg viewBox="0 0 720 170" className="w-full max-w-[720px]" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="データフロー図">
+      <rect width="720" height="170" fill="#ffffff" />
 
-      {/* Flow arrows and labels */}
-      {flows.slice(0, 5).map((f, i) => {
-        const x = 10 + i * 142;
+      <defs>
+        <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa298" />
+        </marker>
+      </defs>
+
+      {steps.map((s, i) => {
+        const x = 10 + i * 117;
         return (
-          <g key={i} transform={`translate(${x}, 20)`}>
-            <rect x="0" y="0" width="120" height="50" rx="8" fill={steps[i].color} stroke={steps[i].border} strokeWidth="1.5" />
-            <text x="60" y="22" textAnchor="middle" fontSize="16">{steps[i].icon}</text>
-            <text x="60" y="38" textAnchor="middle" fontSize="10" fill="#3d5a32" fontWeight="600">{steps[i].label}</text>
-            {i < 5 && (
-              <>
-                <line x1="120" y1="25" x2="138" y2="25" stroke="#8aa87a" strokeWidth="1.5" markerEnd="url(#arrowGreen2)" />
-                <text x="60" y="75" textAnchor="middle" fontSize="8" fill="#8aa87a">{flows[i]?.description?.slice(0, 15)}</text>
-              </>
+          <g key={i}>
+            <rect x={x} y="18" width="106" height="46" rx="6" fill={s.color} stroke={s.border} strokeWidth="1.1" />
+            <text x={x + 53} y="37" textAnchor="middle" fontSize="11.5" fill="#3f463b" fontWeight="700">{s.label}</text>
+            <text x={x + 53} y="52" textAnchor="middle" fontSize="8.5" fill="#8a9288">{s.sub}</text>
+            {i < steps.length - 1 && (
+              <line x1={x + 106} y1="41" x2={x + 114} y2="41" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr2)" />
             )}
           </g>
         );
       })}
 
-      {/* Return flow */}
-      <g transform="translate(10, 100)">
-        <rect x="0" y="0" width="700" height="45" rx="8" fill="#fdf6e8" stroke="#c9a84c" strokeWidth="1" strokeDasharray="4 3" />
-        <text x="350" y="18" textAnchor="middle" fontSize="10" fill="#7a6420" fontWeight="600">戻り値: 体調スコア・検出結果・土壌水分・アドバイス</text>
-        <text x="350" y="34" textAnchor="middle" fontSize="9" fill="#a08930">バックエンドが統合し、フロントエンドにJSONで返す → ユーザーに表示</text>
-      </g>
+      <text x="710" y="45" textAnchor="end" fontSize="9" fill="#8a9288">→ 検出・測定データ</text>
 
-      <defs>
-        <marker id="arrowGreen2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#8aa87a" />
-        </marker>
-      </defs>
+      {/* return flow */}
+      <line x1="360" y1="82" x2="360" y2="96" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr2)" />
+      <g>
+        <rect x="160" y="98" width="400" height="40" rx="6" fill="#f7f3e8" stroke="#b8a878" strokeWidth="1" />
+        <text x="360" y="116" textAnchor="middle" fontSize="10.5" fill="#5d5438" fontWeight="600">バックエンドが統合 → フロントに JSON で返却</text>
+        <text x="360" y="130" textAnchor="middle" fontSize="9.5" fill="#8a7f5e">体調スコア ・ 検出結果 ・ 土壌水分 ・ アドバイス</text>
+      </g>
     </svg>
   );
 }
 
 function HealthAssessmentSVG() {
+  const box = { rx: 6, sw: 1.1 };
   return (
-    <svg viewBox="0 0 720 340" className="w-full max-w-[720px]" xmlns="http://www.w3.org/2000/svg">
-      <rect width="720" height="340" fill="#fafaf8" rx="12" />
+    <svg viewBox="0 0 720 330" className="w-full max-w-[720px]" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="体調判定のフロー図">
+      <rect width="720" height="330" fill="#ffffff" />
 
-      {/* Step 1: Input */}
-      <g transform="translate(20, 20)">
-        <rect x="0" y="0" width="160" height="60" rx="8" fill="#f0f7ec" stroke="#7ba86a" strokeWidth="1.5" />
-        <text x="80" y="25" textAnchor="middle" fontSize="11" fill="#3d5a32" fontWeight="700">動画/画像</text>
-        <text x="80" y="42" textAnchor="middle" fontSize="9" fill="#6b8f5e">フレーム抽出</text>
+      <defs>
+        <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa298" />
+        </marker>
+        <marker id="arrP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#a89db8" />
+        </marker>
+      </defs>
+
+      {/* Step 1 input */}
+      <g>
+        <rect x="24" y="20" width="150" height="54" rx={box.rx} fill="#f2f2f0" stroke="#c9c9c4" strokeWidth={box.sw} />
+        <text x="99" y="42" textAnchor="middle" fontSize="12" fill="#44443f" fontWeight="700">動画 / 画像</text>
+        <text x="99" y="58" textAnchor="middle" fontSize="9.5" fill="#8a9288">フレーム抽出</text>
+      </g>
+      <line x1="174" y1="47" x2="212" y2="47" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr3)" />
+
+      {/* Step 2 detection */}
+      <g>
+        <rect x="214" y="20" width="150" height="54" rx={box.rx} fill="#f5f0e6" stroke="#b8a878" strokeWidth={box.sw} />
+        <text x="289" y="42" textAnchor="middle" fontSize="12" fill="#5d5438" fontWeight="700">olive-p が検出</text>
+        <text x="289" y="58" textAnchor="middle" fontSize="9.5" fill="#8a7f5e">葉数 ・ 実数 ・ 面積</text>
+      </g>
+      <line x1="364" y1="47" x2="402" y2="47" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr3)" />
+
+      {/* Step 3 soil */}
+      <g>
+        <rect x="404" y="20" width="140" height="54" rx={box.rx} fill="#edf1f5" stroke="#8a9db0" strokeWidth={box.sw} />
+        <text x="474" y="42" textAnchor="middle" fontSize="12" fill="#405d74" fontWeight="700">土壌水分を統合</text>
+        <text x="474" y="58" textAnchor="middle" fontSize="9.5" fill="#6a7f92">sensor1/2 ・ 温湿度</text>
+      </g>
+      <line x1="544" y1="47" x2="576" y2="47" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr3)" />
+
+      {/* Step 4 score */}
+      <g>
+        <rect x="578" y="20" width="118" height="54" rx={box.rx} fill="#f3f1f6" stroke="#a89db8" strokeWidth={box.sw} />
+        <text x="637" y="42" textAnchor="middle" fontSize="12" fill="#5c5470" fontWeight="700">スコア算出</text>
+        <text x="637" y="58" textAnchor="middle" fontSize="9.5" fill="#8a8498">0.0 〜 1.0</text>
       </g>
 
-      {/* Arrow 1 */}
-      <line x1="180" y1="50" x2="220" y2="50" stroke="#8aa87a" strokeWidth="2" markerEnd="url(#arrowGreen3)" />
+      <text x="60" y="104" fontSize="11" fill="#44443f" fontWeight="700">判定基準（4 段階）:</text>
 
-      {/* Step 2: Detection */}
-      <g transform="translate(220, 20)">
-        <rect x="0" y="0" width="160" height="60" rx="8" fill="#fdf6e8" stroke="#c9a84c" strokeWidth="1.5" />
-        <text x="80" y="25" textAnchor="middle" fontSize="11" fill="#7a6420" fontWeight="700">olive-p 検出</text>
-        <text x="80" y="42" textAnchor="middle" fontSize="9" fill="#a08930">葉数・実数・面積</text>
-      </g>
+      {/* states */}
+      {[
+        { name: 'happy', range: '≥ 0.75', note: '順調', color: '#4c9a5a' },
+        { name: 'good', range: '0.55 – 0.75', note: '良好', color: '#84a841' },
+        { name: 'caution', range: '0.35 – 0.55', note: '注意', color: '#c99a2e' },
+        { name: 'danger', range: '< 0.35', note: '要管理', color: '#c25a4a' },
+      ].map((s, i) => (
+        <g key={s.name} transform={`translate(${24 + i * 172}, 112)`}>
+          <rect x="0" y="0" width="160" height="34" rx="5" fill="#ffffff" stroke="#deded8" strokeWidth="0.8" />
+          <rect x="0" y="0" width="4" height="34" rx="2" fill={s.color} />
+          <text x="14" y="15" fontSize="11.5" fill="#44443f" fontWeight="700">{s.name}</text>
+          <text x="14" y="28" fontSize="9.5" fill="#8a9288">{s.range}</text>
+          <text x="150" y="15" textAnchor="end" fontSize="9.5" fill={s.color} fontWeight="600">{s.note}</text>
+        </g>
+      ))}
 
-      {/* Arrow 2 */}
-      <line x1="380" y1="50" x2="420" y2="50" stroke="#8aa87a" strokeWidth="2" markerEnd="url(#arrowGreen3)" />
+      <text x="60" y="176" fontSize="11" fill="#44443f" fontWeight="700">使用する入力情報:</text>
 
-      {/* Step 3: Soil */}
-      <g transform="translate(420, 20)">
-        <rect x="0" y="0" width="140" height="60" rx="8" fill="#e8f2fc" stroke="#5b9bd5" strokeWidth="1.5" />
-        <text x="70" y="25" textAnchor="middle" fontSize="11" fill="#2a5a8a" fontWeight="700">土壌水分統合</text>
-        <text x="70" y="42" textAnchor="middle" fontSize="9" fill="#4a7ab0">センサー1/2・温湿度</text>
-      </g>
-
-      {/* Arrow 3 */}
-      <line x1="560" y1="50" x2="600" y2="50" stroke="#8aa87a" strokeWidth="2" markerEnd="url(#arrowGreen3)" />
-
-      {/* Step 4: Health State */}
-      <g transform="translate(600, 20)">
-        <rect x="0" y="0" width="100" height="60" rx="8" fill="#f5f0fa" stroke="#9a7ab5" strokeWidth="1.5" />
-        <text x="50" y="25" textAnchor="middle" fontSize="11" fill="#5a3a7a" fontWeight="700">判定</text>
-        <text x="50" y="42" textAnchor="middle" fontSize="9" fill="#8a6aaa">health_state</text>
-      </g>
-
-      {/* Arrow down from Step 4 */}
-      <line x1="650" y1="80" x2="650" y2="110" stroke="#9a7ab5" strokeWidth="2" markerEnd="url(#arrowPurple)" />
-
-      {/* Score output */}
-      <g transform="translate(560, 110)">
-        <rect x="0" y="0" width="180" height="45" rx="8" fill="#f5f0fa" stroke="#9a7ab5" strokeWidth="1.5" />
-        <text x="90" y="20" textAnchor="middle" fontSize="11" fill="#5a3a7a" fontWeight="700">スコア 0.0 ~ 1.0</text>
-        <text x="90" y="36" textAnchor="middle" fontSize="9" fill="#8a6aaa">total_health_score</text>
-      </g>
-
-      {/* Health states breakdown */}
-      <g transform="translate(20, 130)">
-        <text x="0" y="15" fontSize="11" fill="#3d5a32" fontWeight="700">判定基準:</text>
-      </g>
-
-      {/* happy */}
-      <g transform="translate(20, 160)">
-        <rect x="0" y="0" width="150" height="36" rx="6" fill="#4c9a5a" opacity="0.15" />
-        <rect x="0" y="0" width="6" height="36" rx="3" fill="#4c9a5a" />
-        <text x="18" y="15" fontSize="11" fill="#3d6a32" fontWeight="700">happy</text>
-        <text x="18" y="28" fontSize="9" fill="#5a8a4a">≥ 0.75  順調</text>
-      </g>
-
-      {/* good */}
-      <g transform="translate(185, 160)">
-        <rect x="0" y="0" width="150" height="36" rx="6" fill="#84a841" opacity="0.15" />
-        <rect x="0" y="0" width="6" height="36" rx="3" fill="#84a841" />
-        <text x="18" y="15" fontSize="11" fill="#5a7a30" fontWeight="700">good</text>
-        <text x="18" y="28" fontSize="9" fill="#7a9a40">0.55-0.75  良好</text>
-      </g>
-
-      {/* caution */}
-      <g transform="translate(350, 160)">
-        <rect x="0" y="0" width="150" height="36" rx="6" fill="#c99a2e" opacity="0.15" />
-        <rect x="0" y="0" width="6" height="36" rx="3" fill="#c99a2e" />
-        <text x="18" y="15" fontSize="11" fill="#8a6a10" fontWeight="700">caution</text>
-        <text x="18" y="28" fontSize="9" fill="#a08a20">0.35-0.55  注意</text>
-      </g>
-
-      {/* danger */}
-      <g transform="translate(515, 160)">
-        <rect x="0" y="0" width="150" height="36" rx="6" fill="#c25a4a" opacity="0.15" />
-        <rect x="0" y="0" width="6" height="36" rx="3" fill="#c25a4a" />
-        <text x="18" y="15" fontSize="11" fill="#8a3a2a" fontWeight="700">danger</text>
-        <text x="18" y="28" fontSize="9" fill="#a04a3a">&lt; 0.35  要管理</text>
-      </g>
-
-      {/* Input factors */}
-      <g transform="translate(20, 220)">
-        <text x="0" y="15" fontSize="11" fill="#3d5a32" fontWeight="700">使用する入力情報:</text>
-      </g>
-
-      <g transform="translate(20, 245)">
-        {['葉数', '実数', '土壌水分1', '土壌水分2', '気温', '湿度'].map((label, i) => (
-          <g key={i} transform={`translate(${i * 115}, 0)`}>
-            <rect x="0" y="0" width="105" height="30" rx="6" fill="#f0f7ec" stroke="#c5d9b8" strokeWidth="1" />
-            <text x="52" y="19" textAnchor="middle" fontSize="10" fill="#4a6a3a">{label}</text>
+      {/* input chips */}
+      <g transform="translate(24, 186)">
+        {['葉数', '実数', '土壌水分 1', '土壌水分 2', '気温', '湿度'].map((label, i) => (
+          <g key={i} transform={`translate(${i * 114}, 0)`}>
+            <rect x="0" y="0" width="104" height="28" rx="14" fill="#f5f5f2" stroke="#d8d8d2" strokeWidth="0.8" />
+            <text x="52" y="18" textAnchor="middle" fontSize="10" fill="#5b6255">{label}</text>
           </g>
         ))}
       </g>
 
-      {/* Explanation */}
-      <g transform="translate(20, 295)">
-        <rect x="0" y="0" width="680" height="35" rx="6" fill="#fdf6e8" stroke="#e0d0a0" strokeWidth="1" />
-        <text x="340" y="14" textAnchor="middle" fontSize="9" fill="#7a6420">
-          動画フレームから葉と実を検出し、土壌水分センサーデータと統合してスコアを算出。
-        </text>
-        <text x="340" y="28" textAnchor="middle" fontSize="9" fill="#7a6420">
-          スコアは 0.0〜1.0 の範囲で、しきい値（happy≥0.75, good≥0.55, caution≥0.35）で 4 段階に分類されます。
-        </text>
-      </g>
-
-      <defs>
-        <marker id="arrowGreen3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#8aa87a" />
-        </marker>
-        <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#9a7ab5" />
-        </marker>
-      </defs>
+      {/* note */}
+      <rect x="24" y="236" width="672" height="70" rx="6" fill="#fafaf7" stroke="#e3e3dd" strokeWidth="0.8" />
+      <text x="360" y="258" textAnchor="middle" fontSize="9.5" fill="#6a6f63">
+        動画フレームから葉と実を検出し、土壌水分センサーの値を統合して健康スコアを算出。
+      </text>
+      <text x="360" y="274" textAnchor="middle" fontSize="9.5" fill="#6a6f63">
+        スコアは 0.0〜1.0 で、しきい値（0.75 / 0.55 / 0.35）によって 4 段階に分類されます。
+      </text>
+      <text x="360" y="290" textAnchor="middle" fontSize="9.5" fill="#6a6f63">
+        判定結果は観測として保存され、ダッシュボード・推移・カレンダーで確認できます。
+      </text>
     </svg>
   );
 }
 
 function NotificationFlowSVG() {
   return (
-    <svg viewBox="0 0 720 200" className="w-full max-w-[720px]" xmlns="http://www.w3.org/2000/svg">
-      <rect width="720" height="200" fill="#fafaf8" rx="12" />
-
-      {/* Trigger: Sensor offline */}
-      <g transform="translate(20, 20)">
-        <rect x="0" y="0" width="160" height="50" rx="8" fill="#fdf0eb" stroke="#d4764e" strokeWidth="1.5" />
-        <text x="80" y="20" textAnchor="middle" fontSize="11" fill="#8a4a2a" fontWeight="700">📡 センサー停止検知</text>
-        <text x="80" y="36" textAnchor="middle" fontSize="9" fill="#b06a3a">6h以上データなし</text>
-      </g>
-
-      {/* Arrow */}
-      <line x1="180" y1="45" x2="220" y2="45" stroke="#d4764e" strokeWidth="2" markerEnd="url(#arrowOrange2)" />
-
-      {/* Monitor thread */}
-      <g transform="translate(220, 20)">
-        <rect x="0" y="0" width="160" height="50" rx="8" fill="#f0f7ec" stroke="#7ba86a" strokeWidth="1.5" />
-        <text x="80" y="20" textAnchor="middle" fontSize="11" fill="#3d5a32" fontWeight="700">⚙️ 監視スレッド</text>
-        <text x="80" y="36" textAnchor="middle" fontSize="9" fill="#6b8f5e">1時間ごとにチェック</text>
-      </g>
-
-      {/* Arrow */}
-      <line x1="380" y1="45" x2="420" y2="45" stroke="#d4764e" strokeWidth="2" markerEnd="url(#arrowOrange2)" />
-
-      {/* Cooldown check */}
-      <g transform="translate(420, 20)">
-        <rect x="0" y="0" width="140" height="50" rx="8" fill="#fdf6e8" stroke="#c9a84c" strokeWidth="1.5" />
-        <text x="70" y="20" textAnchor="middle" fontSize="11" fill="#7a6420" fontWeight="700">🕐 24hクールダウン</text>
-        <text x="70" y="36" textAnchor="middle" fontSize="9" fill="#a08930">一日一回のみ送信</text>
-      </g>
-
-      {/* Arrow */}
-      <line x1="560" y1="45" x2="600" y2="45" stroke="#d4764e" strokeWidth="2" markerEnd="url(#arrowOrange2)" />
-
-      {/* Notification */}
-      <g transform="translate(600, 20)">
-        <rect x="0" y="0" width="100" height="50" rx="8" fill="#fdf0eb" stroke="#d4764e" strokeWidth="1.5" />
-        <text x="50" y="20" textAnchor="middle" fontSize="16">🔔</text>
-        <text x="50" y="38" textAnchor="middle" fontSize="10" fill="#8a4a2a" fontWeight="600">通知作成</text>
-      </g>
-
-      {/* Arrow down */}
-      <line x1="650" y1="70" x2="650" y2="100" stroke="#d4764e" strokeWidth="2" markerEnd="url(#arrowOrange2)" />
-
-      {/* Targets */}
-      <g transform="translate(20, 100)">
-        <text x="0" y="15" fontSize="11" fill="#3d5a32" fontWeight="700">通知先:</text>
-      </g>
-
-      {/* Admin */}
-      <g transform="translate(20, 125)">
-        <rect x="0" y="0" width="200" height="40" rx="8" fill="#f0f7ec" stroke="#7ba86a" strokeWidth="1.5" />
-        <text x="100" y="18" textAnchor="middle" fontSize="11" fill="#3d5a32" fontWeight="700">👤 管理者アカウント</text>
-        <text x="100" y="33" textAnchor="middle" fontSize="9" fill="#6b8f5e">全農家のデータを管理</text>
-      </g>
-
-      {/* Farmers */}
-      <g transform="translate(240, 125)">
-        <rect x="0" y="0" width="200" height="40" rx="8" fill="#f0f7ec" stroke="#7ba86a" strokeWidth="1.5" />
-        <text x="100" y="18" textAnchor="middle" fontSize="11" fill="#3d5a32" fontWeight="700">👨‍🌾 農家アカウント</text>
-        <text x="100" y="33" textAnchor="middle" fontSize="9" fill="#6b8f5e">自分の農園のデータのみ</text>
-      </g>
-
-      {/* All farmers */}
-      <g transform="translate(460, 125)">
-        <rect x="0" y="0" width="240" height="40" rx="8" fill="#fdf6e8" stroke="#c9a84c" strokeWidth="1" strokeDasharray="4 3" />
-        <text x="120" y="18" textAnchor="middle" fontSize="10" fill="#7a6420" fontWeight="600">全アカウントに target_role=&quot;all&quot; で送信</text>
-        <text x="120" y="33" textAnchor="middle" fontSize="9" fill="#a08930">通知一覧ページで確認可能</text>
-      </g>
-
-      {/* Other notifications */}
-      <g transform="translate(20, 175)">
-        <rect x="0" y="0" width="680" height="18" rx="4" fill="#f5f0fa" stroke="#c5b8d5" strokeWidth="0.5" />
-        <text x="340" y="13" textAnchor="middle" fontSize="8" fill="#8a6aaa">
-          その他: 体調アラート（解析時に自動判定）・管理者からの手動通知
-        </text>
-      </g>
+    <svg viewBox="0 0 720 210" className="w-full max-w-[720px]" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="通知システムのフロー図">
+      <rect width="720" height="210" fill="#ffffff" />
 
       <defs>
-        <marker id="arrowOrange2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#d4764e" />
+        <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa298" />
         </marker>
       </defs>
+
+      {/* step 1 */}
+      <g>
+        <rect x="20" y="20" width="150" height="50" rx="6" fill="#f5f2f0" stroke="#c9b8b0" strokeWidth="1.1" />
+        <text x="95" y="39" textAnchor="middle" fontSize="11.5" fill="#5a504b" fontWeight="700">センサー停止を検知</text>
+        <text x="95" y="55" textAnchor="middle" fontSize="9" fill="#8a807a">6 時間以上データなし</text>
+      </g>
+      <line x1="170" y1="45" x2="210" y2="45" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr4)" />
+
+      {/* step 2 */}
+      <g>
+        <rect x="212" y="20" width="150" height="50" rx="6" fill="#eef3ea" stroke="#6d8f5a" strokeWidth="1.1" />
+        <text x="287" y="39" textAnchor="middle" fontSize="11.5" fill="#3c5233" fontWeight="700">監視スレッド</text>
+        <text x="287" y="55" textAnchor="middle" fontSize="9" fill="#6d7f63">1 時間ごとに確認</text>
+      </g>
+      <line x1="362" y1="45" x2="402" y2="45" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr4)" />
+
+      {/* step 3 */}
+      <g>
+        <rect x="404" y="20" width="140" height="50" rx="6" fill="#f5f0e6" stroke="#b8a878" strokeWidth="1.1" />
+        <text x="474" y="39" textAnchor="middle" fontSize="11.5" fill="#5d5438" fontWeight="700">24 時間クールダウン</text>
+        <text x="474" y="55" textAnchor="middle" fontSize="9" fill="#8a7f5e">一日一回のみ送信</text>
+      </g>
+      <line x1="544" y1="45" x2="576" y2="45" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr4)" />
+
+      {/* step 4 */}
+      <g>
+        <rect x="578" y="20" width="122" height="50" rx="6" fill="#eef3ea" stroke="#6d8f5a" strokeWidth="1.1" />
+        <text x="639" y="39" textAnchor="middle" fontSize="11.5" fill="#3c5233" fontWeight="700">通知を作成</text>
+        <text x="639" y="55" textAnchor="middle" fontSize="9" fill="#6d7f63">全アカウント宛</text>
+      </g>
+
+      <line x1="639" y1="70" x2="639" y2="100" stroke="#9aa298" strokeWidth="1.4" markerEnd="url(#arr4)" />
+
+      <text x="40" y="116" fontSize="11" fill="#44443f" fontWeight="700">通知先:</text>
+
+      {/* targets */}
+      <g>
+        <rect x="40" y="126" width="190" height="40" rx="6" fill="#f2f2f0" stroke="#c9c9c4" strokeWidth="1" />
+        <text x="135" y="143" textAnchor="middle" fontSize="11" fill="#44443f" fontWeight="600">管理者</text>
+        <text x="135" y="157" textAnchor="middle" fontSize="9" fill="#8a9288">全農家のデータを管理</text>
+      </g>
+      <g>
+        <rect x="250" y="126" width="190" height="40" rx="6" fill="#f2f2f0" stroke="#c9c9c4" strokeWidth="1" />
+        <text x="345" y="143" textAnchor="middle" fontSize="11" fill="#44443f" fontWeight="600">農家</text>
+        <text x="345" y="157" textAnchor="middle" fontSize="9" fill="#8a9288">自分の農園のデータのみ</text>
+      </g>
+      <g>
+        <rect x="460" y="126" width="240" height="40" rx="6" fill="#f7f3e8" stroke="#b8a878" strokeWidth="1" strokeDasharray="4 3" />
+        <text x="580" y="143" textAnchor="middle" fontSize="10.5" fill="#5d5438" fontWeight="600">target_role = &quot;all&quot; で送信</text>
+        <text x="580" y="157" textAnchor="middle" fontSize="9" fill="#8a7f5e">通知一覧ページで確認できる</text>
+      </g>
+
+      {/* other triggers */}
+      <rect x="40" y="182" width="660" height="20" rx="4" fill="#fafaf7" stroke="#e3e3dd" strokeWidth="0.8" />
+      <text x="370" y="195" textAnchor="middle" fontSize="9" fill="#8a9288">
+        その他の通知: 体調アラート（解析時に自動判定）・ 管理者からの手動通知
+      </text>
     </svg>
   );
 }
