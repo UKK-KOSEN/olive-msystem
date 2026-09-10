@@ -1128,7 +1128,7 @@ function AnalyseControls({
 }
 
 function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }) {
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   if (error) {
     return (
@@ -1146,20 +1146,48 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
     );
   }
 
-  const findComparison = (o: Observation): Observation | null => {
-    if (o.upscaled == null) return null;
-    return obs.find(
+  // Group by timestamp_sec (+ tree_id) so comparison rows don't duplicate.
+  // Each group has a "primary" display row and an optional "comparison" obs.
+  interface RowGroup {
+    key: string;
+    primary: Observation;
+    comparison: Observation | null;
+    timestamp_sec: number;
+  }
+
+  const groups: RowGroup[] = [];
+  const seen = new Set<string>();
+  for (const o of obs) {
+    const tsKey = `${o.timestamp_sec}_${o.tree_id ?? ''}`;
+    if (seen.has(tsKey)) continue;
+    seen.add(tsKey);
+    const pair = obs.find(
       (other) =>
         other.id !== o.id &&
         other.timestamp_sec === o.timestamp_sec &&
-        other.upscaled !== o.upscaled &&
-        other.tree_id === o.tree_id,
-    ) ?? null;
-  };
+        other.tree_id === o.tree_id &&
+        other.upscaled !== o.upscaled,
+    );
+    // Prefer upscaled as primary if both exist
+    let primary: Observation;
+    let comparison: Observation | null = null;
+    if (pair) {
+      if (o.upscaled) {
+        primary = o;
+        comparison = pair;
+      } else {
+        primary = pair;
+        comparison = o;
+      }
+    } else {
+      primary = o;
+    }
+    groups.push({ key: tsKey, primary: primary!, comparison, timestamp_sec: o.timestamp_sec });
+  }
 
   return (
     <div>
-      <h3 className="label mb-2">解析結果（{obs.length} 時点）</h3>
+      <h3 className="label mb-2">解析結果（{groups.length} フレーム）</h3>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -1174,14 +1202,17 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
             </tr>
           </thead>
           <tbody>
-            {obs.map((o) => {
+            {groups.map((g) => {
+              const o = g.primary;
               const st = o.health_state;
-              const isOpen = expanded === o.id;
-              const comp = isOpen ? findComparison(o) : null;
+              const isOpen = expanded === g.key;
+              const comp = isOpen ? g.comparison : null;
               return (
-                <div key={o.id}>
+                <div key={g.key}>
                   <tr className={isOpen ? 'border-t border-neutral-100 bg-neutral-50' : 'border-t border-neutral-100 hover:bg-neutral-50/60'}>
-                    <td className="py-2.5 pr-4 font-medium tabular-nums text-neutral-700">{formatTimestamp(o.timestamp_sec)}</td>
+                    <td className="py-2.5 pr-4 font-medium tabular-nums text-neutral-700">
+                      {formatTimestamp(o.timestamp_sec)}
+                    </td>
                     <td className="py-2.5 pr-4 tabular-nums">{o.leaf_count ?? '—'}</td>
                     <td className="py-2.5 pr-4 tabular-nums">{o.fruit_count ?? '—'}</td>
                     <td className="py-2.5 pr-4 tabular-nums">
@@ -1202,12 +1233,24 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                       {o.annotated_path ? <FrameThumb obs={o} /> : '—'}
                     </td>
                     <td className="py-2.5 text-right">
-                      <button
-                        onClick={() => setExpanded(isOpen ? null : o.id)}
-                        className="text-sm text-olive-700 hover:underline"
-                      >
-                        {isOpen ? '閉じる' : '詳細'}
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {comp && (
+                          <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-violet-200">
+                            比較あり
+                          </span>
+                        )}
+                        {o.upscaled && (
+                          <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-violet-200">
+                            AI拡大
+                          </span>
+                        )}
+                        <button
+                          onClick={() => setExpanded(isOpen ? null : g.key)}
+                          className="text-sm text-olive-700 hover:underline"
+                        >
+                          {isOpen ? '閉じる' : '詳細'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {isOpen && (
@@ -1221,7 +1264,7 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                                 <FrameThumbLarge obs={o.upscaled ? o : comp} />
                               </div>
                               <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
-                                <p className="mb-1.5 text-center text-[10px] font-semibold text-neutral-600">元画像（upscaleなし）</p>
+                                <p className="mb-1.5 text-center text-[10px] font-semibold text-neutral-600">元画像</p>
                                 <FrameThumbLarge obs={o.upscaled ? comp : o} />
                               </div>
                             </div>
