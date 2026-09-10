@@ -82,23 +82,52 @@ class OliveAnalyzer:
         self._VideoProcessor = video.VideoProcessor
         self.config_path = OLIVE_P_DIR / "config" / "runtime.yaml"
         self.config_path = self.config_path if self.config_path.exists() else None
+        self._upscaler = None
 
-    def _new_analyzer(self, drone_mode: bool = False):
+    def _get_upscaler(self):
+        """Return a shared AI upscaler (realesrgan-ncnn-vulkan), or None.
+
+        The upscaler instance is created lazily once and reused across all
+        calls so the (heavy) subprocess tool is only invoked when a low-res
+        frame actually needs upscaling. If the tool is not installed, this
+        returns None and analysis proceeds without upscaling.
+        """
+        if self._upscaler is None:
+            try:
+                sys.path.insert(0, str(OLIVE_P_DIR))
+                from src.upscale import ImageUpscaler
+                up = ImageUpscaler()
+                self._upscaler = up if up.available else None
+            except Exception:
+                self._upscaler = None
+        return self._upscaler
+
+    def _new_analyzer(self, drone_mode: bool = False, upscale: bool = False):
         config = self._runtime.load_runtime_config(self.config_path)
-        return self._Analyzer(config, resolution_mode="auto", drone_mode=drone_mode)
+        upscaler = self._get_upscaler() if upscale else None
+        return self._Analyzer(config, resolution_mode="auto", drone_mode=drone_mode,
+                              upscaler=upscaler, upscale=bool(upscaler is not None))
 
     # ---- image analysis ---------------------------------------------------
-    def analyze_image(self, image_bgr, source: str, drone_mode: bool = False):
+    def analyze_image(self, image_bgr, source: str, drone_mode: bool = False,
+                      upscale: Optional[bool] = None):
         """Run the olive-p algorithm on a single BGR frame.
 
         Returns the full result dict (with numpy masks intact for drawing)
         plus the annotated BGR image.
+
+        ``upscale``: True to AI-upscale low-res images before detection,
+        False to disable. None (default) means "auto": upscaling is enabled
+        for drone mode (low-res aerial input), matching olive-p's behaviour.
         """
-        analyzer = self._new_analyzer(drone_mode=drone_mode)
+        if upscale is None:
+            upscale = drone_mode
+        analyzer = self._new_analyzer(drone_mode=drone_mode, upscale=upscale)
         return analyzer.analyze(image_bgr, source)
 
     def analyze_image_file(self, image_path: str, output_dir: str, source: str,
-                           drone_mode: bool = False) -> dict:
+                           drone_mode: bool = False,
+                           upscale: Optional[bool] = None) -> dict:
         """Analyse a single still image file and write annotated/raw copies.
 
         Returns a JSON-serialisable record (mirrors the per-time records
@@ -113,7 +142,8 @@ class OliveAnalyzer:
         raw_path = out / "image_raw.jpg"
         annotated_path = out / "annotated.jpg"
         _imwrite(raw_path, frame)
-        result, annotated = self.analyze_image(frame, source, drone_mode=drone_mode)
+        result, annotated = self.analyze_image(frame, source, drone_mode=drone_mode,
+                                               upscale=upscale)
         _imwrite(annotated_path, annotated)
         rec = {k: v for k, v in result.items() if not isinstance(v, np.ndarray)}
         rec["_frame_raw"] = str(raw_path)
@@ -144,6 +174,7 @@ class OliveAnalyzer:
     def analyze_video_at_times(self, video_path: str, times: list[float],
                                output_dir: str, source: str,
                                drone_mode: bool = False,
+                               upscale: Optional[bool] = None,
                                progress_cb=None) -> list[dict]:
         """Analyse the video at the given timestamps (in seconds).
 
@@ -180,7 +211,9 @@ class OliveAnalyzer:
                 raw_path = out / f"frame_{label}.jpg"
                 _imwrite(raw_path, frame)
                 try:
-                    result, annotated = self.analyze_image(frame, f"{source}@{label}")
+                    result, annotated = self.analyze_image(
+                        frame, f"{source}@{label}", drone_mode=drone_mode,
+                        upscale=upscale)
                 except Exception as exc:  # pragma: no cover
                     results.append({
                         "ok": False, "timestamp": t, "label": label,

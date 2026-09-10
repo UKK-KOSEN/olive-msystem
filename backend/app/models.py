@@ -51,6 +51,7 @@ class AnalyseTimesRequest(BaseModel):
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
     drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
+    upscale: bool | None = Field(default=None, description="AI-upscale low-res frames (True force, False disable, None auto from drone_mode)")
 
 
 class AnalyseTimesTextRequest(BaseModel):
@@ -59,6 +60,7 @@ class AnalyseTimesTextRequest(BaseModel):
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
     drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
+    upscale: bool | None = Field(default=None, description="AI-upscale low-res frames (True force, False disable, None auto from drone_mode)")
 
 
 class SoilMoistureInput(BaseModel):
@@ -75,6 +77,7 @@ class AnalyseImageRequest(BaseModel):
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
     drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
+    upscale: bool | None = Field(default=None, description="AI-upscale low-res frames (True force, False disable, None auto from drone_mode)")
 
 
 class HealthState(BaseModel):

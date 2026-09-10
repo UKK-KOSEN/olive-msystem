@@ -488,11 +488,12 @@ export const api = {
   async videoJobs(): Promise<any[]> {
     return handle(await get('/api/videos/jobs'));
   },
-  async analyseTimes(videoId: number, times: number[], soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean): Promise<any> {
+  async analyseTimes(videoId: number, times: number[], soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean, upscale?: boolean): Promise<any> {
     const body: any = { times };
     if (soilMoisture) body.soil_moisture = soilMoisture;
     if (treeId) body.tree_id = treeId;
     if (droneMode) body.drone_mode = true;
+    if (upscale) body.upscale = true;
     return handle(await send(`/api/videos/${videoId}/analyse`, { method: 'POST', body }));
   },
   async observations(videoId?: number, farmerId?: number, opts?: { from_date?: string; to_date?: string; source_type?: string; tree_id?: string }): Promise<Observation[]> {
@@ -574,11 +575,12 @@ export const api = {
   async images(): Promise<ImageAsset[]> {
     return handle(await get('/api/images'));
   },
-  async analyseImage(imageId: number, soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean): Promise<any> {
+  async analyseImage(imageId: number, soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean, upscale?: boolean): Promise<any> {
     const body: any = {};
     if (soilMoisture) body.soil_moisture = soilMoisture;
     if (treeId) body.tree_id = treeId;
     if (droneMode) body.drone_mode = true;
+    if (upscale) body.upscale = true;
     return handle(await send(`/api/images/${imageId}/analyse`, { method: 'POST', body }));
   },
   async imageObservations(imageId: number): Promise<Observation[]> {

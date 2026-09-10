@@ -576,6 +576,7 @@ def video_jobs(user: dict = Depends(get_current_user)):
             "enqueued_at": j.get("enqueued_at"),
             "finished_at": j.get("finished_at"),
             "drone_mode": bool(j.get("drone_mode")),
+            "upscale": j.get("upscale"),
             "tree_id": j.get("tree_id"),
         })
     return out
@@ -658,7 +659,8 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
     source = f"image#{image_id}" + (f":{req.tree_id}" if req.tree_id else "")
     try:
         rec = grader.analyze_image_file(str(image_path), str(out_dir), source,
-                                        drone_mode=req.drone_mode)
+                                        drone_mode=req.drone_mode,
+                                        upscale=req.upscale)
     except Exception as exc:
         store.update_image(image_id, status="error")
         raise HTTPException(500, f"analysis failed: {exc}")
@@ -746,7 +748,7 @@ def soil_moisture_status():
 def analyse_video(video_id: int, req: AnalyseTimesRequest, user: dict = Depends(get_current_user)):
     """Analyse an uploaded video at the given timestamps (seconds)."""
     return _enqueue(video_id, req.times, req.tree_id, req.soil_moisture, user,
-                    drone_mode=req.drone_mode)
+                    drone_mode=req.drone_mode, upscale=req.upscale)
 
 
 @app.post("/api/videos/{video_id}/analyse-times")
@@ -757,13 +759,14 @@ def analyse_video_text(video_id: int, req: AnalyseTimesTextRequest, user: dict =
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return _enqueue(video_id, times, req.tree_id, req.soil_moisture, user,
-                    drone_mode=req.drone_mode)
+                    drone_mode=req.drone_mode, upscale=req.upscale)
 
 
 def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
              soil_moisture: Optional[SoilMoistureInput] = None,
              user: dict = None,
-             drone_mode: bool = False):
+             drone_mode: bool = False,
+             upscale: Optional[bool] = None):
     _owned_video(video_id, user)
     video = store.get_video(video_id)
     if video["status"] == "processing":
@@ -772,7 +775,7 @@ def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
         raise HTTPException(400, "no times given")
     job = runner.enqueue(video_id, sorted(set(round(t, 3) for t in times)), tree_id,
                          soil_manual=soil_moisture.dict() if soil_moisture else None,
-                         drone_mode=drone_mode)
+                         drone_mode=drone_mode, upscale=upscale)
     return {"job": job}
 
 

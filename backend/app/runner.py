@@ -69,7 +69,8 @@ class Runner:
         self.thread.start()
 
     def enqueue(self, video_id: int, times: list[float], tree_id: Optional[str] = None,
-                soil_manual: Optional[dict] = None, drone_mode: bool = False) -> dict:
+                soil_manual: Optional[dict] = None, drone_mode: bool = False,
+                upscale: Optional[bool] = None) -> dict:
         with self._lock:
             job = {
                 "job_id": self._job_id,
@@ -78,6 +79,7 @@ class Runner:
                 "tree_id": tree_id,
                 "soil_manual": soil_manual,
                 "drone_mode": drone_mode,
+                "upscale": upscale,
                 "status": "queued",
                 "enqueued_at": time.time(),
                 "started_at": None,
@@ -148,6 +150,7 @@ class Runner:
             results = grader.analyze_video_at_times(
                 str(video_path), job["times"], str(out_dir), source,
                 drone_mode=bool(job.get("drone_mode")),
+                upscale=job.get("upscale"),
                 progress_cb=_progress,
             )
             job["stage"] = "saving"

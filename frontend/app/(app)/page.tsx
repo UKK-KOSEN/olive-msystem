@@ -88,6 +88,7 @@ export default function Dashboard() {
   const [soilInputs, setSoilInputs] = useState<Record<number, SoilMoistureInput | undefined>>({});
   const [treeIdInputs, setTreeIdInputs] = useState<Record<number, string>>({});
   const [droneModes, setDroneModes] = useState<Record<number, boolean>>({});
+  const [upscaleModes, setUpscaleModes] = useState<Record<number, boolean>>({});
   const [soilStatus, setSoilStatus] = useState<SoilStatus | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -208,7 +209,7 @@ export default function Dashboard() {
   };
 
   const runAnalysis = async (video: Video, customTimes?: string, soil?: SoilMoistureInput,
-                              treeId?: string, droneMode?: boolean) => {
+                              treeId?: string, droneMode?: boolean, upscale?: boolean) => {
     setError(null);
     setRunning(video.id);
     try {
@@ -231,7 +232,7 @@ export default function Dashboard() {
           times = [0, 1, 2, 3, 4];
         }
       }
-      await api.analyseTimes(video.id, times, soil, treeId, droneMode);
+      await api.analyseTimes(video.id, times, soil, treeId, droneMode, upscale);
       setSelected(video.id);
     } catch (e: any) {
       setError(e.message || '解析の開始に失敗しました');
@@ -242,7 +243,8 @@ export default function Dashboard() {
 
   const runAnalysisWithSoil = (video: Video, custom?: string) =>
     runAnalysis(video, custom, soilInputs[video.id],
-      treeIdInputs[video.id]?.trim() || undefined, droneModes[video.id] ?? false);
+      treeIdInputs[video.id]?.trim() || undefined, droneModes[video.id] ?? false,
+      upscaleModes[video.id] ?? false);
 
   const selectVideo = (id: number) => {
     setSelected((cur) => (cur === id ? null : id));
@@ -745,6 +747,8 @@ export default function Dashboard() {
                       onTreeIdChange={(val) => setTreeIdInputs((prev) => ({ ...prev, [v.id]: val }))}
                       droneMode={droneModes[v.id] ?? false}
                       onDroneModeChange={(val) => setDroneModes((prev) => ({ ...prev, [v.id]: val }))}
+                      upscale={upscaleModes[v.id] ?? false}
+                      onUpscaleChange={(val) => setUpscaleModes((prev) => ({ ...prev, [v.id]: val }))}
                     />
                     <div className="mt-4">
                       <ObservationTable obs={obsByVideo[v.id] || []} error={obsErrors[v.id]} />
@@ -1036,6 +1040,8 @@ function AnalyseControls({
   onTreeIdChange,
   droneMode,
   onDroneModeChange,
+  upscale,
+  onUpscaleChange,
 }: {
   video: Video;
   timeSpec: string;
@@ -1048,6 +1054,8 @@ function AnalyseControls({
   onTreeIdChange: (val: string) => void;
   droneMode?: boolean;
   onDroneModeChange: (val: boolean) => void;
+  upscale?: boolean;
+  onUpscaleChange: (val: boolean) => void;
 }) {
   const defaultHint =
     video.duration_sec && video.duration_sec > 0
@@ -1089,10 +1097,24 @@ function AnalyseControls({
             <input
               type="checkbox"
               checked={droneMode ?? false}
-              onChange={(e) => onDroneModeChange(e.target.checked)}
+              onChange={(e) => {
+                onDroneModeChange(e.target.checked);
+                // Drone/aerial input is low-res: automatically enable AI upscaling,
+                // matching olive-p's behaviour.
+                if (e.target.checked && !upscale) onUpscaleChange(true);
+              }}
               className="h-4 w-4 rounded"
             />
             ドローン撮影（低解像度・上空からの動画）
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-600">
+            <input
+              type="checkbox"
+              checked={upscale ?? false}
+              onChange={(e) => onUpscaleChange(e.target.checked)}
+              className="h-4 w-4 rounded"
+            />
+            AIアップスケール（低解像度を高画質化して解析・時間がかかります）
           </label>
         </div>
         <SoilInputPanel onChange={onSoilChange} />

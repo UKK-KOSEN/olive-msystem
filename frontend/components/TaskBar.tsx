@@ -17,6 +17,7 @@ interface ActiveJob {
   current_label?: string | null;
   started_at?: number | null;
   drone_mode?: boolean;
+  upscale?: boolean | null;
   tree_id?: string | null;
 }
 
@@ -171,6 +172,11 @@ export default function TaskBar() {
                 {j.drone_mode && (
                   <span className="inline-flex items-center rounded bg-sky-50 px-1.5 py-0.5 font-medium text-sky-700">
                     ドローン撮影
+                  </span>
+                )}
+                {j.upscale && (
+                  <span className="inline-flex items-center rounded bg-violet-50 px-1.5 py-0.5 font-medium text-violet-700">
+                    AIアップスケール
                   </span>
                 )}
                 {j.tree_id && (
