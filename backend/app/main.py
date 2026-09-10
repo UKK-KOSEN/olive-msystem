@@ -568,6 +568,15 @@ def video_jobs(user: dict = Depends(get_current_user)):
             "requested": len(j.get("times") or []),
             "error": j.get("error"),
             "saved": (j.get("result") or {}) and (j.get("result") or {}).get("saved"),
+            "stage": j.get("stage"),
+            "current": j.get("current", 0),
+            "total": j.get("total", len(j.get("times") or [])),
+            "current_label": j.get("current_label"),
+            "started_at": j.get("started_at"),
+            "enqueued_at": j.get("enqueued_at"),
+            "finished_at": j.get("finished_at"),
+            "drone_mode": bool(j.get("drone_mode")),
+            "tree_id": j.get("tree_id"),
         })
     return out
 

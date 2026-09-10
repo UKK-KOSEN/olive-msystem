@@ -136,11 +136,22 @@ class Runner:
         out_dir.mkdir(parents=True, exist_ok=True)
         requested_tree_id = job.get("tree_id")
         source = f"video#{job['video_id']}" + (f":{requested_tree_id}" if requested_tree_id else "")
+
+        def _progress(done: int, total: int, label: str | None = None):
+            job["progress"] = done / max(1, total)
+            job["current"] = done
+            job["total"] = total
+            job["stage"] = "analyzing"
+            job["current_label"] = label
+
         try:
             results = grader.analyze_video_at_times(
                 str(video_path), job["times"], str(out_dir), source,
                 drone_mode=bool(job.get("drone_mode")),
+                progress_cb=_progress,
             )
+            job["stage"] = "saving"
+            job["current_label"] = None
             saved = 0
             total = len(job["times"]) or 1
             manual = job.get("soil_manual")
@@ -183,10 +194,12 @@ class Runner:
             job["status"] = "done"
             job["finished_at"] = time.time()
             job["progress"] = 1.0
+            job["stage"] = None
             self.store.update_video(job["video_id"], status="done")
         except Exception as exc:  # pragma: no cover
             log.error("job failed: %s", traceback.format_exc())
             job["status"] = "error"
             job["error"] = f"{type(exc).__name__}: {exc}"
+            job["stage"] = "error"
             job["finished_at"] = time.time()
             self.store.update_video(job["video_id"], status="error")

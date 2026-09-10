@@ -143,7 +143,8 @@ class OliveAnalyzer:
     # ---- time-specified video analysis ------------------------------------
     def analyze_video_at_times(self, video_path: str, times: list[float],
                                output_dir: str, source: str,
-                               drone_mode: bool = False) -> list[dict]:
+                               drone_mode: bool = False,
+                               progress_cb=None) -> list[dict]:
         """Analyse the video at the given timestamps (in seconds).
 
         For each requested timestamp a frame is seeked, analysed with the
@@ -152,22 +153,30 @@ class OliveAnalyzer:
           - frame_<HH-MM-SS>.jpg       (raw frame)
           - a JSON record in the returned list.
 
+        ``progress_cb(done, total, label)`` (optional) is invoked before each
+        frame is analysed so callers can surface live job progress.
+
         Returns a list of per-time result dicts (JSON-serialisable).
         """
         processor = self._VideoProcessor(str(video_path), _noop_logger())
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         sorted_times = sorted(times)
+        total = len(sorted_times)
         results = []
         try:
-            for t in sorted_times:
+            for idx, t in enumerate(sorted_times, start=1):
+                label = _format_ts(t)
+                if progress_cb:
+                    progress_cb(idx - 1, total, label)  # before this frame
                 frame = processor.get_frame_at_time(t)
                 if frame is None:
                     results.append({
                         "ok": False, "timestamp": t, "error": "out of range",
                     })
+                    if progress_cb:
+                        progress_cb(idx, total, label)
                     continue
-                label = _format_ts(t)
                 raw_path = out / f"frame_{label}.jpg"
                 _imwrite(raw_path, frame)
                 try:
@@ -177,7 +186,11 @@ class OliveAnalyzer:
                         "ok": False, "timestamp": t, "label": label,
                         "error": f"{type(exc).__name__}: {exc}",
                     })
+                    if progress_cb:
+                        progress_cb(idx, total, label)
                     continue
+                if progress_cb:
+                    progress_cb(idx, total, label)  # after this frame
                 annotated_path = out / f"annotated_{label}.jpg"
                 _imwrite(annotated_path, annotated)
                 # Build a JSON-serialisable record.
