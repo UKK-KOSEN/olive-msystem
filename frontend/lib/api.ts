@@ -66,6 +66,8 @@ export interface Observation {
   image_id?: number | null;
   source_type?: string | null;
   tree_id?: string | null;
+  upscaled?: boolean | null;
+  upscale_model?: string | null;
 }
 
 export interface TreeRecord {
@@ -488,12 +490,13 @@ export const api = {
   async videoJobs(): Promise<any[]> {
     return handle(await get('/api/videos/jobs'));
   },
-  async analyseTimes(videoId: number, times: number[], soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean, upscale?: boolean): Promise<any> {
+  async analyseTimes(videoId: number, times: number[], soilMoisture?: SoilMoistureInput, treeId?: string, droneMode?: boolean, upscale?: boolean, compare?: boolean): Promise<any> {
     const body: any = { times };
     if (soilMoisture) body.soil_moisture = soilMoisture;
     if (treeId) body.tree_id = treeId;
     if (droneMode) body.drone_mode = true;
     if (upscale) body.upscale = true;
+    if (compare) body.compare = true;
     return handle(await send(`/api/videos/${videoId}/analyse`, { method: 'POST', body }));
   },
   async observations(videoId?: number, farmerId?: number, opts?: { from_date?: string; to_date?: string; source_type?: string; tree_id?: string }): Promise<Observation[]> {

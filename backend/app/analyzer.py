@@ -205,6 +205,7 @@ class OliveAnalyzer:
                                output_dir: str, source: str,
                                drone_mode: bool = False,
                                upscale: Optional[bool] = None,
+                               compare: bool = False,
                                progress_cb=None) -> list[dict]:
         """Analyse the video at the given timestamps (in seconds).
 
@@ -216,6 +217,10 @@ class OliveAnalyzer:
 
         ``progress_cb(done, total, label)`` (optional) is invoked before each
         frame is analysed so callers can surface live job progress.
+
+        When ``compare=True`` and upscaling actually occurred for a frame, a
+        second non-upscaled analysis is run and attached as ``_comparison``
+        on that frame's result dict.
 
         Returns a list of per-time result dicts (JSON-serialisable).
         """
@@ -263,6 +268,17 @@ class OliveAnalyzer:
                 rec["timestamp_sec"] = t
                 rec["label"] = label
                 rec["ok"] = True
+
+                # Run non-upscaled comparison pass when requested
+                if compare and rec.get("upscaled"):
+                    comp = self.compare_analysis(frame, f"{source}@{label}",
+                                                 drone_mode=drone_mode)
+                    comp_annotated_path = out / f"annotated_original_{label}.jpg"
+                    if comp.get("_annotated_frame") is not None:
+                        _imwrite(comp_annotated_path, comp.pop("_annotated_frame"))
+                        comp["_frame_annotated"] = str(comp_annotated_path)
+                    rec["_comparison"] = comp
+
                 results.append(rec)
         finally:
             processor.close()

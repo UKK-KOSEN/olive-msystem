@@ -232,7 +232,7 @@ export default function Dashboard() {
           times = [0, 1, 2, 3, 4];
         }
       }
-      await api.analyseTimes(video.id, times, soil, treeId, droneMode, upscale);
+      await api.analyseTimes(video.id, times, soil, treeId, droneMode, upscale, upscale);
       setSelected(video.id);
     } catch (e: any) {
       setError(e.message || '解析の開始に失敗しました');
@@ -1146,6 +1146,17 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
     );
   }
 
+  const findComparison = (o: Observation): Observation | null => {
+    if (o.upscaled == null) return null;
+    return obs.find(
+      (other) =>
+        other.id !== o.id &&
+        other.timestamp_sec === o.timestamp_sec &&
+        other.upscaled !== o.upscaled &&
+        other.tree_id === o.tree_id,
+    ) ?? null;
+  };
+
   return (
     <div>
       <h3 className="label mb-2">解析結果（{obs.length} 時点）</h3>
@@ -1166,6 +1177,7 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
             {obs.map((o) => {
               const st = o.health_state;
               const isOpen = expanded === o.id;
+              const comp = isOpen ? findComparison(o) : null;
               return (
                 <div key={o.id}>
                   <tr className={isOpen ? 'border-t border-neutral-100 bg-neutral-50' : 'border-t border-neutral-100 hover:bg-neutral-50/60'}>
@@ -1201,7 +1213,33 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                   {isOpen && (
                     <tr className="border-t border-neutral-100 bg-neutral-50">
                       <td colSpan={7} className="py-4">
-                        <ObservationDetail obs={o} />
+                        {comp ? (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-2">
+                                <p className="mb-1.5 text-center text-[10px] font-semibold text-violet-700">拡大版（AI upscale）</p>
+                                <FrameThumbLarge obs={o.upscaled ? o : comp} />
+                              </div>
+                              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
+                                <p className="mb-1.5 text-center text-[10px] font-semibold text-neutral-600">元画像（upscaleなし）</p>
+                                <FrameThumbLarge obs={o.upscaled ? comp : o} />
+                              </div>
+                            </div>
+                            <ComparisonMetrics upscaled={o.upscaled ? o : comp} original={o.upscaled ? comp : o} />
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                              <div>
+                                <h4 className="mb-2 text-xs font-semibold text-violet-700">拡大版の解析結果</h4>
+                                <ObservationDetail obs={o.upscaled ? o : comp} />
+                              </div>
+                              <div>
+                                <h4 className="mb-2 text-xs font-semibold text-neutral-600">元画像の解析結果</h4>
+                                <ObservationDetail obs={o.upscaled ? comp : o} />
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <ObservationDetail obs={o} />
+                        )}
                       </td>
                     </tr>
                   )}
@@ -1221,6 +1259,69 @@ function FrameThumb({ obs }: { obs: Observation }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={url} alt="解析画像" className="h-11 w-20 rounded-md object-cover ring-1 ring-neutral-200" />
+  );
+}
+
+function FrameThumbLarge({ obs }: { obs: Observation }) {
+  const url = (obs.result?.['_frame_annotated_url'] as string) || null;
+  if (!url) return <span className="text-neutral-300">画像なし</span>;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={url} alt="解析画像" className="w-full rounded-md object-contain" />
+  );
+}
+
+function ComparisonMetrics({ upscaled, original }: { upscaled: Observation; original: Observation }) {
+  const uRes = (upscaled.result || {}) as Record<string, any>;
+  const oRes = (original.result || {}) as Record<string, any>;
+  const uHs = upscaled.health_state;
+  const oHs = original.health_state;
+
+  const rows: { label: string; upVal: string; origVal: string }[] = [
+    {
+      label: '健康スコア',
+      upVal: uHs?.score != null ? `${(uHs.score * 100).toFixed(0)}%` : '-',
+      origVal: oHs?.score != null ? `${(oHs.score * 100).toFixed(0)}%` : '-',
+    },
+    {
+      label: '葉数',
+      upVal: String(upscaled.leaf_count ?? uRes.leaf_count ?? '-'),
+      origVal: String(original.leaf_count ?? oRes.leaf_count ?? '-'),
+    },
+    {
+      label: '果実数',
+      upVal: String(upscaled.fruit_count ?? uRes.fruit_count ?? '-'),
+      origVal: String(original.fruit_count ?? oRes.fruit_count ?? '-'),
+    },
+    {
+      label: '緑度',
+      upVal: upscaled.green_coverage != null ? `${upscaled.green_coverage.toFixed(1)}%` : (uRes.green_coverage != null ? `${uRes.green_coverage.toFixed(1)}%` : '-'),
+      origVal: original.green_coverage != null ? `${original.green_coverage.toFixed(1)}%` : (oRes.green_coverage != null ? `${oRes.green_coverage.toFixed(1)}%` : '-'),
+    },
+  ];
+
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+      <p className="mb-2 text-xs font-semibold text-neutral-500">解析結果の比較</p>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-neutral-400">
+            <th className="pb-1 pr-2 text-left font-medium">指標</th>
+            <th className="pb-1 px-2 text-right font-medium text-violet-700">拡大版</th>
+            <th className="pb-1 pl-2 text-right font-medium text-neutral-600">元画像</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label} className="border-t border-neutral-100">
+              <td className="py-1 pr-2 text-neutral-600">{r.label}</td>
+              <td className="py-1 px-2 text-right tabular-nums text-violet-700">{r.upVal}</td>
+              <td className="py-1 pl-2 text-right tabular-nums text-neutral-700">{r.origVal}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

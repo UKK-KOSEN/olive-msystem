@@ -784,7 +784,7 @@ def soil_moisture_status():
 def analyse_video(video_id: int, req: AnalyseTimesRequest, user: dict = Depends(get_current_user)):
     """Analyse an uploaded video at the given timestamps (seconds)."""
     return _enqueue(video_id, req.times, req.tree_id, req.soil_moisture, user,
-                    drone_mode=req.drone_mode, upscale=req.upscale)
+                    drone_mode=req.drone_mode, upscale=req.upscale, compare=req.compare)
 
 
 @app.post("/api/videos/{video_id}/analyse-times")
@@ -795,14 +795,15 @@ def analyse_video_text(video_id: int, req: AnalyseTimesTextRequest, user: dict =
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return _enqueue(video_id, times, req.tree_id, req.soil_moisture, user,
-                    drone_mode=req.drone_mode, upscale=req.upscale)
+                    drone_mode=req.drone_mode, upscale=req.upscale, compare=req.compare)
 
 
 def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
              soil_moisture: Optional[SoilMoistureInput] = None,
              user: dict = None,
              drone_mode: bool = False,
-             upscale: Optional[bool] = None):
+             upscale: Optional[bool] = None,
+             compare: bool = False):
     _owned_video(video_id, user)
     video = store.get_video(video_id)
     if video["status"] == "processing":
@@ -811,7 +812,7 @@ def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
         raise HTTPException(400, "no times given")
     job = runner.enqueue(video_id, sorted(set(round(t, 3) for t in times)), tree_id,
                          soil_manual=soil_moisture.dict() if soil_moisture else None,
-                         drone_mode=drone_mode, upscale=upscale)
+                         drone_mode=drone_mode, upscale=upscale, compare=compare)
     return {"job": job}
 
 
