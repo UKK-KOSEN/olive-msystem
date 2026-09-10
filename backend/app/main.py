@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Body, FastAPI, File, UploadFile, HTTPException, Query, Depends, Form, Header
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .analyzer import OliveAnalyzer, parse_time
 from .captured import extract_captured_at, parse_captured_candidate
@@ -148,6 +150,25 @@ async def unhandled_exception_handler(request, exc: Exception):
         status_code=500,
         content={"detail": "サーバー内部でエラーが発生しました"},
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    errors = exc.errors()
+    lines = []
+    for e in errors:
+        loc = ".".join(str(x) for x in e.get("loc", []) if x != "body")
+        lines.append(f"{loc}: {e.get('msg')}" if loc else str(e.get("msg")))
+    logger.warning("validation error on %s: %s", request.url.path, "; ".join(lines) or exc)
+    msg = lines[0] if lines else "入力値が正しくありません"
+    return JSONResponse(status_code=422, content={"detail": msg})
+
+
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(request, exc: StarletteHTTPException):
+    if exc.status_code >= 500:
+        logger.error("http %s error on %s: %s", exc.status_code, request.url.path, exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.get("/api/health")

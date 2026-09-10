@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar from '@/components/AdminSidebar';
+import BackendStatusBanner from '@/components/BackendStatusBanner';
 import { useAuth } from '@/lib/auth';
 
 export default function AdminLayout({
@@ -38,6 +39,7 @@ export default function AdminLayout({
     <div className="flex min-h-screen bg-neutral-50">
       <AdminSidebar />
       <main className="min-w-0 flex-1">{children}</main>
+      <BackendStatusBanner />
     </div>
   );
 }

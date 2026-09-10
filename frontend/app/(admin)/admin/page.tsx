@@ -17,6 +17,7 @@ import { useAuth } from '@/lib/auth';
 import { useSite } from '@/lib/site';
 import { healthJa, healthColor, TrendChart } from '@/components/charts';
 import { IconOlive } from '@/components/icons';
+import ErrorNotice from '@/components/ErrorNotice';
 
 function fmtBytes(bytes: number | null | undefined): string {
   if (!bytes) return '—';
@@ -53,11 +54,16 @@ export default function AdminPage() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [images, setImages] = useState<ImageAsset[]>([]);
   const [obs, setObs] = useState<Observation[]>([]);
-  const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
+    setLoadError(null);
     const [s, v, i, o] = await Promise.all([
-      api.adminStats().catch(() => null),
+      api.adminStats().catch((e) => {
+        setLoadError((prev) => prev ?? (e?.message || 'データの取得に失敗しました'));
+        return null;
+      }),
       api.videos().catch(() => [] as Video[]),
       api.images().catch(() => [] as ImageAsset[]),
       api.observations().catch(() => [] as Observation[]),
@@ -87,7 +93,16 @@ export default function AdminPage() {
     );
   }
 
-  if (!stats) {
+if (!stats) {
+    if (loadError) {
+      return (
+        <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
+          <div className="flex min-h-[40vh] items-center justify-center">
+            <ErrorNotice message={loadError} onRetry={loadAll} className="w-full max-w-md" />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
         <p className="text-sm text-neutral-400">読み込み中…</p>

@@ -19,6 +19,7 @@ import { useAuth } from '@/lib/auth';
 import { TrendChart, StatePill, healthJa, healthColor } from '@/components/charts';
 import { SoilDisplay, SoilInputPanel } from '@/components/SoilComponent';
 import { PageHeader } from '@/components/PageHeader';
+import ErrorNotice from '@/components/ErrorNotice';
 import {
   IconVideo,
   IconImage,
@@ -86,16 +87,27 @@ export default function Dashboard() {
   const [timeSpec, setTimeSpec] = useState<Record<number, string>>({});
   const [soilInputs, setSoilInputs] = useState<Record<number, SoilMoistureInput | undefined>>({});
   const [soilStatus, setSoilStatus] = useState<SoilStatus | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadVideos = useCallback(async () => {
-    const vs = await api.videos().catch(() => []);
-    setVideos(vs);
+    try {
+      const vs = await api.videos();
+      setVideos(vs);
+      setDataError(null);
+    } catch (e: any) {
+      setDataError(e?.message || '動画一覧の取得に失敗しました');
+    }
   }, []);
 
   const loadAllObs = useCallback(async () => {
-    const obs = await api.observations().catch(() => []);
-    setAllObs(obs);
+    try {
+      const obs = await api.observations();
+      setAllObs(obs);
+      setDataError(null);
+    } catch (e: any) {
+      setDataError(e?.message || '観測データの取得に失敗しました');
+    }
   }, []);
 
   const loadObs = useCallback(async (videoId: number) => {
@@ -324,6 +336,8 @@ export default function Dashboard() {
         }
       />
 
+      <ErrorNotice message={dataError} onRetry={() => { loadVideos(); loadAllObs(); }} />
+
       {/* admin: pick which farmer's data to show (never merge all farmers into one trend) */}
       {isAdmin && (
         <section className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
@@ -541,9 +555,7 @@ export default function Dashboard() {
               />
             </div>
             {(uploadError || error) && (
-              <p className="mt-3 rounded-lg bg-health-danger/10 px-3 py-2 text-sm text-health-danger">
-                {uploadError || error}
-              </p>
+              <ErrorNotice message={uploadError || error} />
             )}
           </section>
 

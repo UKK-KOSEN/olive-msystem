@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import TaskBar from '@/components/TaskBar';
+import BackendStatusBanner from '@/components/BackendStatusBanner';
 import { useAuth } from '@/lib/auth';
 
 export default function ProtectedLayout({
@@ -38,6 +39,7 @@ export default function ProtectedLayout({
       <Sidebar />
       <main className="min-w-0 flex-1">{children}</main>
       <TaskBar />
+      <BackendStatusBanner />
     </div>
   );
 }

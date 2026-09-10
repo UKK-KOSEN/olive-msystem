@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, Notification } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { IconBell, IconChevron, IconSend, IconTrash } from '@/components/icons';
+import ErrorNotice from '@/components/ErrorNotice';
 
 export function NotificationsList({ showBadge }: { showBadge?: boolean }) {
   const { user } = useAuth();
@@ -49,9 +50,13 @@ export function NotificationsList({ showBadge }: { showBadge?: boolean }) {
 
   const markRead = async (n: Notification) => {
     if (n.is_read) return;
-    await api.markNotificationRead(n.id);
-    setNotifs((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: 1 } : x)));
-    setUnread((u) => Math.max(0, u - 1));
+    try {
+      await api.markNotificationRead(n.id);
+      setNotifs((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: 1 } : x)));
+      setUnread((u) => Math.max(0, u - 1));
+    } catch (e: any) {
+      setError(e?.message || '既読の更新に失敗しました');
+    }
   };
 
   const toggle = (id: number) => setOpenId((cur) => (cur === id ? null : id));
@@ -85,8 +90,12 @@ export function NotificationsList({ showBadge }: { showBadge?: boolean }) {
 
   const deleteNotif = async (n: Notification) => {
     if (!window.confirm('このお知らせを削除しますか？')) return;
-    await api.deleteNotification(n.id);
-    setNotifs((prev) => prev.filter((x) => x.id !== n.id));
+    try {
+      await api.deleteNotification(n.id);
+      setNotifs((prev) => prev.filter((x) => x.id !== n.id));
+    } catch (e: any) {
+      setError(e?.message || '削除に失敗しました');
+    }
   };
 
   const fmtTime = (iso?: string) => {
@@ -185,7 +194,7 @@ export function NotificationsList({ showBadge }: { showBadge?: boolean }) {
         </div>
       )}
 
-      {error && <div className="card text-sm text-health-danger">{error}</div>}
+      {error && <ErrorNotice message={error} />}
 
       {/* Notification list */}
       {notifs.length === 0 ? (

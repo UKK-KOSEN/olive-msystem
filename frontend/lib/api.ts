@@ -263,37 +263,134 @@ export function getAuthToken() {
   return authToken;
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly retryable: boolean;
+  constructor(message: string, status: number, retryable = false) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.retryable = retryable;
+  }
+}
+
+export class UnauthorizedError extends ApiError {
+  constructor() {
+    super('認証が必要です。再度ログインしてください。', 401, false);
+    this.name = 'UnauthorizedError';
+  }
+}
+
+export class NetworkError extends ApiError {
+  constructor(message: string, retryable = true) {
+    super(message, 0, retryable);
+    this.name = 'NetworkError';
+  }
+}
+
+const REQUEST_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 120_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    return res;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new NetworkError('リクエストがタイムアウトしました。バックエンドの状態を確認してください。');
+    }
+    const msg = err instanceof TypeError
+      ? 'サーバーに接続できませんでした。バックエンドが起動しているかご確認ください。'
+      : err instanceof Error ? err.message : 'サーバーへの接続に失敗しました。';
+    throw new NetworkError(msg);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchRetry(
+  url: string,
+  init: RequestInit,
+  opts?: { timeoutMs?: number; retry?: boolean; attempt?: number }
+): Promise<Response> {
+  const retry = opts?.retry ?? true;
+  const maxAttempts = retry ? 2 : 1;
+  const timeoutMs = opts?.timeoutMs ?? (init.body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
+  let lastErr: unknown = null;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    if (i > 0) await sleep(300 * i + 200);
+    try {
+      const res = await fetchWithTimeout(url, init, timeoutMs);
+      if (retry && isRetryableStatus(res.status)) {
+        lastErr = new ApiError(`サーバーエラーが発生しました（HTTP ${res.status}）`, res.status, true);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastErr = err;
+      if (!(err instanceof ApiError) || !err.retryable || !retry) break;
+    }
+  }
+  if (!lastErr) lastErr = new Error('リクエストに失敗しました');
+  if (lastErr instanceof Error && lastErr.name && lastErr.name === 'ApiError') {
+    throw lastErr;
+  }
+  throw lastErr;
+}
+
+function describeError(j: any, status: number): string {
+  if (!j) return `サーバーエラーが発生しました（HTTP ${status}）`;
+  if (typeof j.detail === 'string') return j.detail;
+  if (Array.isArray(j.detail) && typeof j.detail[0]?.msg === 'string') return j.detail[0].msg;
+  if (typeof j.message === 'string') return j.message;
+  return `サーバーエラーが発生しました（HTTP ${status}）`;
+}
+
 async function handle(res: Response) {
   if (res.status === 401) {
     throw new UnauthorizedError();
   }
   if (!res.ok) {
-    let msg = `${res.status}`;
+    let msg = `サーバーエラーが発生しました（HTTP ${res.status}）`;
     try {
       const j = await res.json();
-      msg = j.detail || JSON.stringify(j) || msg;
+      msg = describeError(j, res.status);
     } catch {
-      msg = res.statusText;
+      if (res.statusText) msg = res.statusText;
     }
-    throw new Error(msg);
+    throw new ApiError(msg, res.status, isRetryableStatus(res.status));
   }
-  return res.json();
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) return res.json();
+  return res.text();
 }
 
-export class UnauthorizedError extends Error {
-  constructor() {
-    super('認証が必要です');
-    this.name = 'UnauthorizedError';
-  }
-}
-
-function get(url: string): Promise<Response> {
+function get(url: string, opts?: { timeoutMs?: number; retry?: boolean }): Promise<Response> {
   const headers: Record<string, string> = {};
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-  return fetch(url, { headers });
+  return fetchRetry(url, { headers }, opts);
 }
 
-function send(url: string, init: { method?: string; headers?: Record<string, string>; body?: any }): Promise<Response> {
+function send(
+  url: string,
+  init: { method?: string; headers?: Record<string, string>; body?: any },
+  opts?: { timeoutMs?: number; retry?: boolean }
+): Promise<Response> {
   const headers: Record<string, string> = { ...(init.headers || {}) };
   if (authToken && !headers['Authorization']) {
     headers['Authorization'] = `Bearer ${authToken}`;
@@ -303,7 +400,7 @@ function send(url: string, init: { method?: string; headers?: Record<string, str
     body = JSON.stringify(body);
     if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
   }
-  return fetch(url, { method: init.method || 'GET', headers, body });
+  return fetchRetry(url, { method: init.method || 'GET', headers, body }, { ...opts, retry: opts?.retry ?? false });
 }
 
 export const api = {
@@ -417,11 +514,11 @@ export const api = {
     const url = `/api/observations/export${qs ? '?' + qs : ''}`;
     const headers: Record<string, string> = {};
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-    const res = await fetch(url, { headers });
+    const res = await fetchRetry(url, { headers }, { timeoutMs: 90_000 });
     if (!res.ok) {
-      let msg = `${res.status}`;
-      try { msg = (await res.json()).detail || msg; } catch {}
-      throw new Error(msg);
+      let msg = `サーバーエラーが発生しました（HTTP ${res.status}）`;
+      try { msg = describeError(await res.json(), res.status); } catch {}
+      throw new ApiError(msg, res.status, isRetryableStatus(res.status));
     }
     const blob = await res.blob();
     const a = document.createElement('a');
@@ -439,6 +536,14 @@ export const api = {
   },
   async health(): Promise<any> {
     return handle(await get('/api/health'));
+  },
+  async pingHealth(timeoutMs = 8000): Promise<boolean> {
+    try {
+      await handle(await get('/api/health', { timeoutMs, retry: false }));
+      return true;
+    } catch {
+      return false;
+    }
   },
   async versions(): Promise<VersionInfo> {
     return handle(await get('/api/versions'));

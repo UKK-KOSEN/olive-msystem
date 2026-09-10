@@ -7,6 +7,7 @@ import { SoilDisplay, SoilInputPanel } from '@/components/SoilComponent';
 import { ObservationDetail } from '@/components/ObservationDetail';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import ErrorNotice from '@/components/ErrorNotice';
 import { IconImage } from '@/components/icons';
 
 function StatusBadge({ status }: { status: ImageAsset['status'] }) {
@@ -179,16 +180,12 @@ export default function ImageAnalysisPage() {
           />
         </div>
         {(uploadError || error) && (
-          <p className="mt-3 rounded-lg bg-health-danger/10 px-3 py-2 text-sm text-health-danger">
-            {uploadError || error}
-          </p>
+          <ErrorNotice message={uploadError || error} />
         )}
       </section>
 
       {loadError && (
-        <div className="mb-6 rounded-lg bg-health-danger/10 px-4 py-3 text-sm text-health-danger">
-          {loadError}
-        </div>
+        <ErrorNotice message={loadError} onRetry={load} />
       )}
 
       <section>

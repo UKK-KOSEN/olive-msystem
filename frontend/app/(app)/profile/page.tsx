@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { PageHeader } from '@/components/PageHeader';
+import ErrorNotice from '@/components/ErrorNotice';
 
 const OLIVE_VARIETIES = ['ルッカ', 'マンザニロ', 'ミッション', 'ネバディロ・ブランコ', 'アルベキーナ', 'コロネイキ', 'フラントイオ', 'ホホリンレ'];
 
@@ -240,7 +241,7 @@ export default function ProfilePage() {
           </div>
         </section>
 
-        {error && <div className="rounded-lg bg-health-danger/10 px-4 py-3 text-sm text-health-danger">{error}</div>}
+        {error && <ErrorNotice message={error} className="mt-0" />}
 
         <div className="flex justify-end">
           <button type="submit" disabled={saving} className="btn-primary">

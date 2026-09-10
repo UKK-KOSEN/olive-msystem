@@ -5,6 +5,7 @@ import { api, formatTimestamp, Observation, OliveStatus } from '@/lib/api';
 import { healthColor, healthJa, StatePill } from '@/components/charts';
 import { FarmerHome } from '@/components/FarmerHome';
 import { PageHeader } from '@/components/PageHeader';
+import ErrorNotice from '@/components/ErrorNotice';
 
 const STATE_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
 
@@ -67,8 +68,8 @@ export default function OlivePage() {
       setStatus(s);
       setObservations(obs);
       setError(null);
-    } catch {
-      setError('バックエンドに接続できません。');
+    } catch (e: any) {
+      setError(e?.message || 'バックエンドに接続できません。');
     }
   }, []);
 
@@ -89,7 +90,7 @@ export default function OlivePage() {
       />
 
       {error && (
-        <div className="card border-health-danger/30 text-sm text-health-danger">{error}</div>
+        <ErrorNotice message={error} />
       )}
 
       {status && (

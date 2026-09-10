@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { healthJa, healthColor } from '@/components/charts';
 import { IconChevronRight } from '@/components/icons';
 import { PageHeader } from '@/components/PageHeader';
+import ErrorNotice from '@/components/ErrorNotice';
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 const STATE_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
@@ -251,7 +252,7 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {error && <div className="card mb-4 text-sm text-health-danger">{error}</div>}
+      {error && <ErrorNotice message={error} onRetry={() => load(viewYear, viewMonth, farmerId)} />}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left: calendar */}

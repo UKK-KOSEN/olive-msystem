@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { healthJa, healthColor, TrendChart, StatePill } from '@/components/charts';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import ErrorNotice from '@/components/ErrorNotice';
 import { ObservationDetail } from '@/components/ObservationDetail';
 import { IconUser, IconDownload, IconTrash } from '@/components/icons';
 
@@ -225,7 +226,7 @@ export default function TrackingPage() {
         description="動画・画像の解析で保存された観測記録を時系列で一覧表示します。絞り込み・一括操作に対応。"
       />
 
-      {error && <div className="card mb-6 text-sm text-health-danger">{error}</div>}
+      {error && <ErrorNotice message={error} />}
 
       {/* Filter bar */}
       <section className="card mb-6 overflow-visible">

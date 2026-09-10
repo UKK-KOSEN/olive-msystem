@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, VersionInfo, FeatureArchitecture, ComponentInfo, DataFlow, ApiEndpointGroup } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
+import ErrorNotice from '@/components/ErrorNotice';
 
 export default function VersionsPage() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
@@ -12,8 +13,8 @@ export default function VersionsPage() {
     try {
       setInfo(await api.versions());
       setError(null);
-    } catch {
-      setError('バックエンドに接続できません。');
+    } catch (e: any) {
+      setError(e?.message || 'バックエンドに接続できません。');
     }
   }, []);
 
@@ -31,7 +32,7 @@ export default function VersionsPage() {
       />
 
       {error && (
-        <div className="card mb-6 text-sm text-health-danger">{error}</div>
+        <ErrorNotice message={error} onRetry={load} />
       )}
 
       {info && (
