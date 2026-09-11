@@ -704,35 +704,17 @@ export default function Dashboard() {
               : `「${videoStatusOrder.find((f) => f.key === vFilter)?.label}」の動画はありません。`}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="space-y-3">
             {shownVideos.map((v) => {
               const poster = obsByVideo[v.id]?.find((o) => o.annotated_path)?.annotated_path ?? null;
-              const active = previewId === v.id || selected === v.id;
               return (
-              <div key={v.id} className={`card card-hover overflow-hidden ${active ? 'ring-2 ring-olive-700/40' : ''}`}>
-                {previewId === v.id && v.storage_path ? (
-                  <div className="border-b border-neutral-100 p-2.5">
-                    <VideoPreview
-                      src={v.storage_path}
-                      poster={poster}
-                      title={v.filename}
-                      durationText={`長さ ${formatDuration(v.duration_sec)}`}
-                    />
-                    <div className="mt-2 flex items-center justify-between gap-2">
-                      <span className="truncate text-xs text-neutral-500">{v.filename}</span>
-                      <button
-                        onClick={() => setPreviewId(null)}
-                        className="btn-secondary btn-sm"
-                      >
-                        プレビューを閉じる
-                      </button>
-                    </div>
-                  </div>
-                ) : (
+              <div key={v.id} className={`card overflow-hidden ${previewId === v.id || selected === v.id ? 'ring-1 ring-olive-700/40' : ''}`}>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-3 p-3">
                   <button
-                    onClick={() => setPreviewId(v.id)}
-                    className="group relative block aspect-video w-full overflow-hidden bg-neutral-100"
+                    onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
+                    className="group relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-neutral-100"
                     aria-label={`動画${v.filename}を再生`}
+                    title="クリックでプレビュー再生"
                   >
                     {poster ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -744,49 +726,66 @@ export default function Dashboard() {
                       />
                     ) : (
                       <span className="grid h-full w-full place-items-center text-neutral-300">
-                        <IconFilm size={40} />
+                        <IconFilm size={26} />
                       </span>
                     )}
-                    <span className="absolute inset-0 grid place-items-center bg-black/0 transition group-hover:bg-black/15" />
                     <span className="absolute inset-0 grid place-items-center">
-                      <span className="grid h-12 w-12 place-items-center rounded-full bg-white/95 text-neutral-800 shadow-md transition group-hover:scale-110">
-                        <IconPlay size={18} className="ml-0.5 translate-x-px" />
+                      <span className="grid h-9 w-9 place-items-center rounded-full bg-white/95 text-neutral-800 shadow-md transition group-hover:scale-110">
+                        <IconPlay size={14} className="ml-0.5" />
                       </span>
                     </span>
-                    <span className="absolute right-2 top-2">
-                      <StatusBadge status={v.status} />
-                    </span>
                     {v.duration_sec != null && (
-                      <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white">
+                      <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 py-0.5 text-[10px] font-medium tabular-nums text-white">
                         {formatDuration(v.duration_sec)}
                       </span>
                     )}
                   </button>
-                )}
 
-                <div className="flex items-center gap-2 p-3">
                   <div className="min-w-0 flex-1">
-                    <button
-                      onClick={() => selectVideo(v.id)}
-                      className="block w-full truncate text-left text-sm font-semibold text-neutral-800 hover:text-olive-700 hover:underline"
-                      title="解析設定と観測結果を開く"
-                    >
-                      {v.filename}
-                    </button>
-                    <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-neutral-400">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <button
+                        onClick={() => selectVideo(v.id)}
+                        className="truncate text-sm font-semibold text-neutral-800 hover:text-olive-700 hover:underline"
+                        title="解析設定と観測結果を開く"
+                      >
+                        {v.filename}
+                      </button>
+                      <StatusBadge status={v.status} />
+                    </div>
+                    <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-neutral-400">
                       <span>{formatBytes(v.size_bytes)}</span>
                       {v.width && v.height && <span>{v.width}×{v.height}</span>}
                       {v.recorded_at && <span>撮影 {formatMeasuredAt(v.recorded_at)}</span>}
                     </p>
                   </div>
-                  <button
-                    onClick={() => runAnalysisWithSoil(v, timeSpec[v.id])}
-                    disabled={v.status === 'processing' || running === v.id}
-                    className="btn-primary btn-sm"
-                  >
-                    {running === v.id ? '開始中…' : '解析'}
-                  </button>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
+                      className="btn-secondary"
+                    >
+                      {previewId === v.id ? 'プレビューを閉じる' : '動画プレビュー'}
+                    </button>
+                    <button
+                      onClick={() => runAnalysisWithSoil(v, timeSpec[v.id])}
+                      disabled={v.status === 'processing' || running === v.id}
+                      className="btn-primary"
+                    >
+                      {running === v.id ? '開始中…' : '解析を実行'}
+                    </button>
+                  </div>
                 </div>
+
+                {previewId === v.id && v.storage_path && (
+                  <div className="border-t border-neutral-100 p-3">
+                    <VideoPreview
+                      src={v.storage_path}
+                      poster={poster}
+                      title={v.filename}
+                      durationText={`長さ ${formatDuration(v.duration_sec)}`}
+                    />
+                  </div>
+                )}
 
                 {selected === v.id && (
                   <div className="border-t border-neutral-100 p-4">
