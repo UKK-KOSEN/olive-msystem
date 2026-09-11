@@ -6,6 +6,7 @@ import { healthColor, healthJa, StatePill } from '@/components/charts';
 import { FarmerHome } from '@/components/FarmerHome';
 import { PageHeader } from '@/components/PageHeader';
 import ErrorNotice from '@/components/ErrorNotice';
+import Link from 'next/link';
 
 const STATE_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
 
@@ -140,9 +141,9 @@ export default function OlivePage() {
                 <p className="max-w-md text-sm text-neutral-500">
                   まだ解析データがありません。ダッシュボードから動画を解析すると、ここにオリーブの体調が表示されます。
                 </p>
-                <a href="/" className="btn-primary">
+                <Link href="/" className="btn-primary">
                   ダッシュボードへ
-                </a>
+                </Link>
               </div>
             )}
           </section>

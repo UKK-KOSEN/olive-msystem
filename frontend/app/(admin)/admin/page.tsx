@@ -12,6 +12,7 @@ import {
   Observation,
   Video,
   SiteSettings,
+  formatDuration,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSite } from '@/lib/site';
@@ -526,7 +527,9 @@ const [confirmClear, setConfirmClear] = useState(false);
         <p className="text-sm text-neutral-400">動画なし</p>
       ) : (
         <ul className="divide-y divide-neutral-100">
-{videos.map((v) => (
+{videos.map((v) => {
+            const poster = obs.find((o) => o.video_id === v.id && o.annotated_path)?.annotated_path ?? null;
+            return (
             <li key={v.id} className="py-2">
               <div className="flex items-center gap-3">
                 <span className="min-w-0 flex-1 truncate text-sm text-neutral-700">{v.filename}</span>
@@ -543,11 +546,17 @@ const [confirmClear, setConfirmClear] = useState(false);
               </div>
               {previewId === v.id && v.storage_path && (
                 <div className="mt-2">
-                  <VideoPreview src={v.storage_path} title={v.filename} />
+                  <VideoPreview
+                    src={v.storage_path}
+                    poster={poster}
+                    title={v.filename}
+                    durationText={`長さ ${formatDuration(v.duration_sec)}`}
+                  />
                 </div>
               )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
 

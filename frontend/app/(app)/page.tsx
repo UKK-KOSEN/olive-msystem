@@ -29,6 +29,7 @@ import {
   IconChart,
   IconBell,
   IconFilm,
+  IconPlay,
   IconDroplet,
   IconLeaf,
   IconActivity,
@@ -703,53 +704,92 @@ export default function Dashboard() {
               : `「${videoStatusOrder.find((f) => f.key === vFilter)?.label}」の動画はありません。`}
           </div>
         ) : (
-          <div className="space-y-3">
-            {shownVideos.map((v) => (
-              <div key={v.id} className="card">
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {shownVideos.map((v) => {
+              const poster = obsByVideo[v.id]?.find((o) => o.annotated_path)?.annotated_path ?? null;
+              const active = previewId === v.id || selected === v.id;
+              return (
+              <div key={v.id} className={`card card-hover overflow-hidden ${active ? 'ring-2 ring-olive-700/40' : ''}`}>
+                {previewId === v.id && v.storage_path ? (
+                  <div className="border-b border-neutral-100 p-2.5">
+                    <VideoPreview
+                      src={v.storage_path}
+                      poster={poster}
+                      title={v.filename}
+                      durationText={`長さ ${formatDuration(v.duration_sec)}`}
+                    />
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="truncate text-xs text-neutral-500">{v.filename}</span>
+                      <button
+                        onClick={() => setPreviewId(null)}
+                        className="btn-secondary btn-sm"
+                      >
+                        プレビューを閉じる
+                      </button>
+                    </div>
+                  </div>
+                ) : (
                   <button
-                    onClick={() => selectVideo(v.id)}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    onClick={() => setPreviewId(v.id)}
+                    className="group relative block aspect-video w-full overflow-hidden bg-neutral-100"
+                    aria-label={`動画${v.filename}を再生`}
                   >
-                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-neutral-100 text-neutral-600">
-                      <IconFilm size={20} />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-neutral-800">
-                        {v.filename}
+                    {poster ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={poster}
+                        alt={v.filename}
+                        loading="lazy"
+                        className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+                      />
+                    ) : (
+                      <span className="grid h-full w-full place-items-center text-neutral-300">
+                        <IconFilm size={40} />
                       </span>
-                      <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-neutral-400">
-                        <span>{formatBytes(v.size_bytes)}</span>
-                        <span>長さ {formatDuration(v.duration_sec)}</span>
-                        {v.width && v.height && <span>{v.width}×{v.height}</span>}
-                        {v.recorded_at && <span>撮影 {formatMeasuredAt(v.recorded_at)}</span>}
+                    )}
+                    <span className="absolute inset-0 grid place-items-center bg-black/0 transition group-hover:bg-black/15" />
+                    <span className="absolute inset-0 grid place-items-center">
+                      <span className="grid h-12 w-12 place-items-center rounded-full bg-white/95 text-neutral-800 shadow-md transition group-hover:scale-110">
+                        <IconPlay size={18} className="ml-0.5 translate-x-px" />
                       </span>
                     </span>
+                    <span className="absolute right-2 top-2">
+                      <StatusBadge status={v.status} />
+                    </span>
+                    {v.duration_sec != null && (
+                      <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white">
+                        {formatDuration(v.duration_sec)}
+                      </span>
+                    )}
                   </button>
-                  <StatusBadge status={v.status} />
-                  <button
-                    onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
-                    className="btn-secondary"
-                  >
-                    {previewId === v.id ? 'プレビューを閉じる' : '動画プレビュー'}
-                  </button>
+                )}
+
+                <div className="flex items-center gap-2 p-3">
+                  <div className="min-w-0 flex-1">
+                    <button
+                      onClick={() => selectVideo(v.id)}
+                      className="block w-full truncate text-left text-sm font-semibold text-neutral-800 hover:text-olive-700 hover:underline"
+                      title="解析設定と観測結果を開く"
+                    >
+                      {v.filename}
+                    </button>
+                    <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-neutral-400">
+                      <span>{formatBytes(v.size_bytes)}</span>
+                      {v.width && v.height && <span>{v.width}×{v.height}</span>}
+                      {v.recorded_at && <span>撮影 {formatMeasuredAt(v.recorded_at)}</span>}
+                    </p>
+                  </div>
                   <button
                     onClick={() => runAnalysisWithSoil(v, timeSpec[v.id])}
                     disabled={v.status === 'processing' || running === v.id}
-                    className="btn-primary"
+                    className="btn-primary btn-sm"
                   >
-                    {running === v.id ? '開始中…' : '解析を実行'}
+                    {running === v.id ? '開始中…' : '解析'}
                   </button>
                 </div>
 
-                {previewId === v.id && v.storage_path && (
-                  <div className="mt-4 border-t border-neutral-100 pt-4">
-                    <VideoPreview src={v.storage_path} title={v.filename} />
-                  </div>
-                )}
-
                 {selected === v.id && (
-                  <div className="mt-4 border-t border-neutral-100 pt-4">
+                  <div className="border-t border-neutral-100 p-4">
                     <AnalyseControls
                       video={v}
                       timeSpec={timeSpec[v.id] || ''}
@@ -771,7 +811,8 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

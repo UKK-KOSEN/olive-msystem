@@ -86,6 +86,14 @@ export function IconFilm(props: IconProps) {
   );
 }
 
+export function IconPlay(props: IconProps) {
+  return (
+    <svg width={props.size ?? 18} height={props.size ?? 18} viewBox="0 0 24 24" fill="currentColor" className={props.className}>
+      <path d="M8 5.14v13.72a1 1 0 0 0 1.5.87l11-6.86a1 1 0 0 0 0-1.74l-11-6.86a1 1 0 0 0-1.5.87Z" />
+    </svg>
+  );
+}
+
 export function IconDroplet(props: IconProps) {
   return (
     <svg {...base(props)}>
