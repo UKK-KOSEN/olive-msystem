@@ -83,34 +83,44 @@ class OliveAnalyzer:
         self.config_path = OLIVE_P_DIR / "config" / "runtime.yaml"
         self.config_path = self.config_path if self.config_path.exists() else None
         self._upscaler = None
+        self._upscaler_video = None
 
-    def _get_upscaler(self):
+    def _get_upscaler(self, video: bool = False):
         """Return a shared AI upscaler (realesrgan-ncnn-vulkan), or None.
 
         The upscaler instance is created lazily once and reused across all
         calls so the (heavy) subprocess tool is only invoked when a low-res
         frame actually needs upscaling. If the tool is not installed, this
         returns None and analysis proceeds without upscaling.
+
+        ``video``: for video frames the fast video-optimised x4 model
+        (realesr-animevideov3) is used, matching olive-p's video upscale
+        path; still images use the higher-quality realesrgan-x4plus.
         """
-        if self._upscaler is None:
+        if self._upscaler is None or self._upscaler_video is not video:
             try:
                 sys.path.insert(0, str(OLIVE_P_DIR))
                 from src.upscale import ImageUpscaler
-                up = ImageUpscaler()
+                kwargs = {"scale": 4}
+                if video:
+                    kwargs["model"] = "realesr-animevideov3"
+                up = ImageUpscaler(**kwargs)
                 self._upscaler = up if up.available else None
+                self._upscaler_video = video
             except Exception:
                 self._upscaler = None
         return self._upscaler
 
-    def _new_analyzer(self, drone_mode: bool = False, upscale: bool = False):
+    def _new_analyzer(self, drone_mode: bool = False, upscale: bool = False,
+                      video: bool = False):
         config = self._runtime.load_runtime_config(self.config_path)
-        upscaler = self._get_upscaler() if upscale else None
+        upscaler = self._get_upscaler(video=video) if upscale else None
         return self._Analyzer(config, resolution_mode="auto", drone_mode=drone_mode,
                               upscaler=upscaler, upscale=bool(upscaler is not None))
 
     # ---- image analysis ---------------------------------------------------
     def analyze_image(self, image_bgr, source: str, drone_mode: bool = False,
-                      upscale: Optional[bool] = None):
+                      upscale: Optional[bool] = None, video: bool = False):
         """Run the olive-p algorithm on a single BGR frame.
 
         Returns the full result dict (with numpy masks intact for drawing)
@@ -119,10 +129,14 @@ class OliveAnalyzer:
         ``upscale``: True to AI-upscale low-res images before detection,
         False to disable. None (default) means "auto": upscaling is enabled
         for drone mode (low-res aerial input), matching olive-p's behaviour.
+
+        ``video``: use the fast video-optimised x4 upscale model
+        (realesr-animevideov3) instead of the photo model.
         """
         if upscale is None:
             upscale = drone_mode
-        analyzer = self._new_analyzer(drone_mode=drone_mode, upscale=upscale)
+        analyzer = self._new_analyzer(drone_mode=drone_mode, upscale=upscale,
+                                      video=video)
         return analyzer.analyze(image_bgr, source)
 
     def analyze_image_file(self, image_path: str, output_dir: str, source: str,
@@ -248,7 +262,7 @@ class OliveAnalyzer:
                 try:
                     result, annotated = self.analyze_image(
                         frame, f"{source}@{label}", drone_mode=drone_mode,
-                        upscale=upscale)
+                        upscale=upscale, video=True)
                 except Exception as exc:  # pragma: no cover
                     results.append({
                         "ok": False, "timestamp": t, "label": label,

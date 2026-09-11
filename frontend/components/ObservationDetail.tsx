@@ -4,6 +4,7 @@ import { Observation } from '@/lib/api';
 import { HealthGauge, MetricBar } from './HealthGauge';
 import { healthJa, healthColor } from './charts';
 import { IconLeaf, IconOlive, IconActivity, IconClipboard } from './icons';
+import { UpscaledBadge } from './UpscaledBadge';
 
 /**
  * Rich observation detail card showing all olive-p analysis results
@@ -65,12 +66,11 @@ export function ObservationDetail({ obs }: { obs: Observation }) {
                 {obs.tree_id}
               </span>
             )}
-            {result?.upscaled && (
-              <span className="ml-2 inline-flex items-center rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
-                AIアップスケール
-                {result?.upscale_model ? `（${result.upscale_model}）` : ''}
+            {obs.upscaled || result?.upscaled ? (
+              <span className="ml-2 inline-block align-middle">
+                <UpscaledBadge model={obs.upscale_model || result?.upscale_model} />
               </span>
-            )}
+            ) : null}
             {obs.owner && (
               <span className="ml-2">・ {obs.owner.farm_name ?? obs.owner.display_name ?? obs.owner.username}</span>
             )}

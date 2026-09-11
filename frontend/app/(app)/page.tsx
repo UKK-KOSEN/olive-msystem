@@ -18,6 +18,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { TrendChart, StatePill, healthJa, healthColor } from '@/components/charts';
 import { SoilDisplay, SoilInputPanel } from '@/components/SoilComponent';
+import { UpscaledBadge } from '@/components/UpscaledBadge';
 import { PageHeader } from '@/components/PageHeader';
 import ErrorNotice from '@/components/ErrorNotice';
 import {
@@ -232,7 +233,7 @@ export default function Dashboard() {
           times = [0, 1, 2, 3, 4];
         }
       }
-      await api.analyseTimes(video.id, times, soil, treeId, droneMode, upscale, upscale);
+      await api.analyseTimes(video.id, times, soil, treeId, droneMode, upscale);
       setSelected(video.id);
     } catch (e: any) {
       setError(e.message || '解析の開始に失敗しました');
@@ -1103,18 +1104,23 @@ function AnalyseControls({
                 // matching olive-p's behaviour.
                 if (e.target.checked && !upscale) onUpscaleChange(true);
               }}
-              className="h-4 w-4 rounded"
+              className="h-4 w-4 rounded accent-olive-600"
             />
             ドローン撮影（低解像度・上空からの動画）
           </label>
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-600">
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-violet-200 bg-violet-50/50 p-2.5 transition-colors hover:bg-violet-50">
             <input
               type="checkbox"
               checked={upscale ?? false}
               onChange={(e) => onUpscaleChange(e.target.checked)}
-              className="h-4 w-4 rounded"
+              className="mt-0.5 h-4 w-4 rounded accent-violet-600"
             />
-            AIアップスケール（低解像度を高画質化して解析・時間がかかります）
+            <span>
+              <span className="font-semibold text-violet-800">AI高解像度解析（x4）</span>
+              <span className="mt-0.5 block text-[10px] leading-snug text-violet-600">
+                低解像度のフレームをAIで4倍に高画質化してから解析します。高解像度でも精度よく検出できます（処理時間がかかります）。
+              </span>
+            </span>
           </label>
         </div>
         <SoilInputPanel onChange={onSoilChange} />
@@ -1206,7 +1212,6 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
               const o = g.primary;
               const st = o.health_state;
               const isOpen = expanded === g.key;
-              const comp = isOpen ? g.comparison : null;
               return (
                 <div key={g.key}>
                   <tr className={isOpen ? 'border-t border-neutral-100 bg-neutral-50' : 'border-t border-neutral-100 hover:bg-neutral-50/60'}>
@@ -1234,16 +1239,7 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                     </td>
                     <td className="py-2.5 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {comp && (
-                          <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-violet-200">
-                            比較あり
-                          </span>
-                        )}
-                        {o.upscaled && (
-                          <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-violet-200">
-                            AI拡大
-                          </span>
-                        )}
+                        {o.upscaled && <UpscaledBadge model={o.upscale_model} />}
                         <button
                           onClick={() => setExpanded(isOpen ? null : g.key)}
                           className="text-sm text-olive-700 hover:underline"
@@ -1256,33 +1252,7 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                   {isOpen && (
                     <tr className="border-t border-neutral-100 bg-neutral-50">
                       <td colSpan={7} className="py-4">
-                        {comp ? (
-                          <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-2">
-                                <p className="mb-1.5 text-center text-[10px] font-semibold text-violet-700">拡大版（AI upscale）</p>
-                                <FrameThumbLarge obs={o.upscaled ? o : comp} />
-                              </div>
-                              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
-                                <p className="mb-1.5 text-center text-[10px] font-semibold text-neutral-600">元画像</p>
-                                <FrameThumbLarge obs={o.upscaled ? comp : o} />
-                              </div>
-                            </div>
-                            <ComparisonMetrics upscaled={o.upscaled ? o : comp} original={o.upscaled ? comp : o} />
-                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                              <div>
-                                <h4 className="mb-2 text-xs font-semibold text-violet-700">拡大版の解析結果</h4>
-                                <ObservationDetail obs={o.upscaled ? o : comp} />
-                              </div>
-                              <div>
-                                <h4 className="mb-2 text-xs font-semibold text-neutral-600">元画像の解析結果</h4>
-                                <ObservationDetail obs={o.upscaled ? comp : o} />
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <ObservationDetail obs={o} />
-                        )}
+                        <ObservationDetail obs={o} />
                       </td>
                     </tr>
                   )}
@@ -1305,69 +1275,6 @@ function FrameThumb({ obs }: { obs: Observation }) {
   );
 }
 
-function FrameThumbLarge({ obs }: { obs: Observation }) {
-  const url = (obs.result?.['_frame_annotated_url'] as string) || null;
-  if (!url) return <span className="text-neutral-300">画像なし</span>;
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={url} alt="解析画像" className="w-full rounded-md object-contain" />
-  );
-}
-
-function ComparisonMetrics({ upscaled, original }: { upscaled: Observation; original: Observation }) {
-  const uRes = (upscaled.result || {}) as Record<string, any>;
-  const oRes = (original.result || {}) as Record<string, any>;
-  const uHs = upscaled.health_state;
-  const oHs = original.health_state;
-
-  const rows: { label: string; upVal: string; origVal: string }[] = [
-    {
-      label: '健康スコア',
-      upVal: uHs?.score != null ? `${(uHs.score * 100).toFixed(0)}%` : '-',
-      origVal: oHs?.score != null ? `${(oHs.score * 100).toFixed(0)}%` : '-',
-    },
-    {
-      label: '葉数',
-      upVal: String(upscaled.leaf_count ?? uRes.leaf_count ?? '-'),
-      origVal: String(original.leaf_count ?? oRes.leaf_count ?? '-'),
-    },
-    {
-      label: '果実数',
-      upVal: String(upscaled.fruit_count ?? uRes.fruit_count ?? '-'),
-      origVal: String(original.fruit_count ?? oRes.fruit_count ?? '-'),
-    },
-    {
-      label: '緑度',
-      upVal: upscaled.green_coverage != null ? `${upscaled.green_coverage.toFixed(1)}%` : (uRes.green_coverage != null ? `${uRes.green_coverage.toFixed(1)}%` : '-'),
-      origVal: original.green_coverage != null ? `${original.green_coverage.toFixed(1)}%` : (oRes.green_coverage != null ? `${oRes.green_coverage.toFixed(1)}%` : '-'),
-    },
-  ];
-
-  return (
-    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-      <p className="mb-2 text-xs font-semibold text-neutral-500">解析結果の比較</p>
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-neutral-400">
-            <th className="pb-1 pr-2 text-left font-medium">指標</th>
-            <th className="pb-1 px-2 text-right font-medium text-violet-700">拡大版</th>
-            <th className="pb-1 pl-2 text-right font-medium text-neutral-600">元画像</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.label} className="border-t border-neutral-100">
-              <td className="py-1 pr-2 text-neutral-600">{r.label}</td>
-              <td className="py-1 px-2 text-right tabular-nums text-violet-700">{r.upVal}</td>
-              <td className="py-1 pl-2 text-right tabular-nums text-neutral-700">{r.origVal}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function ObservationDetail({ obs }: { obs: Observation }) {
   const r = obs.result || {};
   const st = obs.health_state;
@@ -1381,6 +1288,9 @@ function ObservationDetail({ obs }: { obs: Observation }) {
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <div>
+        {obs.upscaled && (
+          <div className="mb-3"><UpscaledBadge model={obs.upscale_model} large /></div>
+        )}
         {st && (
           <div className="mb-3 rounded-lg border p-3 text-sm" style={{ borderColor: `${healthColor(st.label)}33`, background: `${healthColor(st.label)}0d` }}>
             <p className="font-medium" style={{ color: healthColor(st.label) }}>

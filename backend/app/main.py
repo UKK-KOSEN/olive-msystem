@@ -825,6 +825,10 @@ def _finalize(rows: list[dict]) -> list[dict]:
     for o in rows:
         result = o.get("result") or {}
         o["health_state"] = health_state(result)
+        # Expose AI-upscale flags at the top level so the UI can badge them
+        # without digging into the nested result blob.
+        o["upscaled"] = result.get("upscaled")
+        o["upscale_model"] = result.get("upscale_model")
         uid = o.get("user_id")
         u = owners.get(uid) if uid is not None else None
         if u:

@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, ImageAsset, Observation, SoilMoistureInput, SoilMoistureData } from '@/lib/api';
+import { api, ImageAsset, Observation, SoilMoistureInput } from '@/lib/api';
 import { healthJa, healthColor } from '@/components/charts';
 import { SoilDisplay, SoilInputPanel } from '@/components/SoilComponent';
 import { ObservationDetail } from '@/components/ObservationDetail';
+import { UpscaledBadge } from '@/components/UpscaledBadge';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import ErrorNotice from '@/components/ErrorNotice';
@@ -36,7 +37,6 @@ export default function ImageAnalysisPage() {
   const [running, setRunning] = useState<number | null>(null);
   const [runProgress, setRunProgress] = useState<{ imageId: number; startTime: number; estSeconds: number } | null>(null);
   const [results, setResults] = useState<Record<number, Observation>>({});
-  const [comparisonResults, setComparisonResults] = useState<Record<number, Observation>>({});
   const [soilInputs, setSoilInputs] = useState<Record<number, SoilMoistureInput | undefined>>({});
   const [treeInputs, setTreeInputs] = useState<Record<number, string>>({});
   const [droneFlags, setDroneFlags] = useState<Record<number, boolean>>({});
@@ -128,17 +128,9 @@ export default function ImageAnalysisPage() {
     const estSeconds = Math.max(3, Math.min(30, Math.round((img.size_bytes || 100000) / 100000)));
     setRunProgress({ imageId: img.id, startTime: Date.now(), estSeconds: upscale ? estSeconds * 2 : estSeconds });
     try {
-      // When upscale is enabled, also request comparison (non-upscaled) analysis
-      const data = await api.analyseImage(img.id, soil, treeId, droneMode, upscale, upscale);
+      const data = await api.analyseImage(img.id, soil, treeId, droneMode, upscale);
       if (data?.observation) {
         setResults((prev) => ({ ...prev, [img.id]: data.observation }));
-      }
-      // Handle comparison results (non-upscaled pass)
-      if (data?.observations && data.observations.length === 2) {
-        setComparisonResults((prev) => ({ ...prev, [img.id]: data.observations[1] }));
-      } else {
-        // Clear any previous comparison if not in compare mode
-        setComparisonResults((prev) => { const n = { ...prev }; delete n[img.id]; return n; });
       }
       setExpanded(img.id);
       await load();
@@ -236,10 +228,8 @@ export default function ImageAnalysisPage() {
           <div className="space-y-3">
             {shown.map((img) => {
               const res = results[img.id];
-              const compRes = comparisonResults[img.id];
               const open = expanded === img.id;
               const annotatedUrl = (res?.result?.['_frame_annotated_url'] as string) || null;
-              const compAnnotatedUrl = (compRes?.result?.['_frame_annotated_url'] as string) || null;
               return (
                 <div key={img.id} className="card">
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -248,22 +238,12 @@ export default function ImageAnalysisPage() {
                       className="flex min-w-0 flex-1 items-center gap-3 text-left"
                     >
                       {annotatedUrl ? (
-                        <div className="flex shrink-0 gap-0.5">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={annotatedUrl}
-                            alt="拡大解析結果"
-                            className="h-11 w-16 rounded-md object-cover ring-1 ring-violet-200"
-                          />
-                          {compAnnotatedUrl && (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img
-                              src={compAnnotatedUrl}
-                              alt="元画像解析結果"
-                              className="h-11 w-16 rounded-md object-cover ring-1 ring-neutral-200"
-                            />
-                          )}
-                        </div>
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={annotatedUrl}
+                          alt="解析結果"
+                          className="h-11 w-16 shrink-0 rounded-md object-cover ring-1 ring-violet-200"
+                        />
                       ) : (
                         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-neutral-100 text-neutral-600">
                           <IconImage size={20} />
@@ -321,18 +301,23 @@ export default function ImageAnalysisPage() {
                                     setUpscaleFlags((prev) => ({ ...prev, [img.id]: true }));
                                   }
                                 }}
-                                className="h-4 w-4 rounded"
+                                className="h-4 w-4 rounded accent-olive-600"
                               />
                               ドローン撮影（低解像度・上空からの画像）
                             </label>
-                            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-600">
+                            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-violet-200 bg-violet-50/50 p-2.5 transition-colors hover:bg-violet-50">
                               <input
                                 type="checkbox"
                                 checked={upscaleFlags[img.id] ?? false}
                                 onChange={(e) => setUpscaleFlags((prev) => ({ ...prev, [img.id]: e.target.checked }))}
-                                className="h-4 w-4 rounded"
+                                className="mt-0.5 h-4 w-4 rounded accent-violet-600"
                               />
-                              AIアップスケール（低解像度を高画質化して解析・時間がかかります）
+                              <span>
+                                <span className="font-semibold text-violet-800">AI高解像度解析（x4）</span>
+                                <span className="mt-0.5 block text-[10px] leading-snug text-violet-600">
+                                  低解像度の画像をAIで4倍に高画質化してから解析します。高解像度でも精度よく検出できます（処理時間がかかります）。
+                                </span>
+                              </span>
                             </label>
                           </div>
                           <div className="mt-2">
@@ -351,42 +336,12 @@ export default function ImageAnalysisPage() {
                         )}
                         {!running && res ? (
                           <div className="space-y-4">
-                            {compRes ? (
-                              <>
-                                {/* Side-by-side images */}
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-2">
-                                    <p className="mb-1.5 text-center text-[10px] font-semibold text-violet-700">拡大版（AI upscale）</p>
-                                    {res.result?.['_frame_annotated_url'] && (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={res.result['_frame_annotated_url'] as string} alt="拡大解析結果" className="w-full rounded-md object-contain" />
-                                    )}
-                                  </div>
-                                  <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
-                                    <p className="mb-1.5 text-center text-[10px] font-semibold text-neutral-600">元画像（upscaleなし）</p>
-                                    {compRes.result?.['_frame_annotated_url'] && (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={compRes.result['_frame_annotated_url'] as string} alt="元画像解析結果" className="w-full rounded-md object-contain" />
-                                    )}
-                                  </div>
-                                </div>
-                                {/* Side-by-side comparison metrics */}
-                                <ComparisonMetrics upscaled={res} original={compRes} />
-                                {/* Side-by-side ObservationDetail */}
-                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                                  <div>
-                                    <h4 className="mb-2 text-xs font-semibold text-violet-700">拡大版の解析結果</h4>
-                                    <ObservationDetail obs={res} />
-                                  </div>
-                                  <div>
-                                    <h4 className="mb-2 text-xs font-semibold text-neutral-600">元画像の解析結果</h4>
-                                    <ObservationDetail obs={compRes} />
-                                  </div>
-                                </div>
-                              </>
-                            ) : (
-                              <ObservationDetail obs={res} />
+                            {res.upscaled && (
+                              <div className="flex justify-end">
+                                <UpscaledBadge model={res.upscale_model} large />
+                              </div>
                             )}
+                            <ObservationDetail obs={res} />
                           </div>
                         ) : !running && !res ? (
                           <div className="rounded-lg border border-dashed border-neutral-200 p-6 text-center text-sm text-neutral-400">
@@ -466,63 +421,6 @@ function AnalysisProgress({ elapsed, estSeconds }: { elapsed: number; estSeconds
       <div className="mt-1 text-xs text-olive-500 text-center">
         画像サイズに応じて数秒〜数十秒かかります
       </div>
-    </div>
-  );
-}
-
-/**
- * Side-by-side comparison of key metrics between upscaled and original analyses.
- */
-function ComparisonMetrics({ upscaled, original }: { upscaled: Observation; original: Observation }) {
-  const uRes = (upscaled.result || {}) as Record<string, any>;
-  const oRes = (original.result || {}) as Record<string, any>;
-  const uHs = upscaled.health_state;
-  const oHs = original.health_state;
-
-  const rows: { label: string; upVal: string; origVal: string }[] = [
-    {
-      label: '健康スコア',
-      upVal: uHs?.score != null ? `${(uHs.score * 100).toFixed(0)}%` : '-',
-      origVal: oHs?.score != null ? `${(oHs.score * 100).toFixed(0)}%` : '-',
-    },
-    {
-      label: '葉数',
-      upVal: String(upscaled.leaf_count ?? uRes.leaf_count ?? '-'),
-      origVal: String(original.leaf_count ?? oRes.leaf_count ?? '-'),
-    },
-    {
-      label: '果実数',
-      upVal: String(upscaled.fruit_count ?? uRes.fruit_count ?? '-'),
-      origVal: String(original.fruit_count ?? oRes.fruit_count ?? '-'),
-    },
-    {
-      label: '緑度',
-      upVal: upscaled.green_coverage != null ? `${upscaled.green_coverage.toFixed(1)}%` : (uRes.green_coverage != null ? `${uRes.green_coverage.toFixed(1)}%` : '-'),
-      origVal: original.green_coverage != null ? `${original.green_coverage.toFixed(1)}%` : (oRes.green_coverage != null ? `${oRes.green_coverage.toFixed(1)}%` : '-'),
-    },
-  ];
-
-  return (
-    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-      <p className="mb-2 text-xs font-semibold text-neutral-500">解析結果の比較</p>
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-neutral-400">
-            <th className="pb-1 pr-2 text-left font-medium">指標</th>
-            <th className="pb-1 px-2 text-right font-medium text-violet-700">拡大版</th>
-            <th className="pb-1 pl-2 text-right font-medium text-neutral-600">元画像</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.label} className="border-t border-neutral-100">
-              <td className="py-1 pr-2 text-neutral-600">{r.label}</td>
-              <td className="py-1 px-2 text-right tabular-nums text-violet-700">{r.upVal}</td>
-              <td className="py-1 pl-2 text-right tabular-nums text-neutral-700">{r.origVal}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
