@@ -838,6 +838,12 @@ def _finalize(rows: list[dict]) -> list[dict]:
             p = o.get(key)
             if p:
                 o[key] = _url_for_storage(p)
+        # Rebuild nested frame URLs too, so stale/legacy absolute paths in
+        # older results still render correctly.
+        for key in ("_frame_annotated", "_frame_raw"):
+            p = result.get(key)
+            if p:
+                result[key + "_url"] = _url_for_storage(p)
         try:
             o["explain_text"] = explain_detection_ja(result)
         except Exception:
@@ -853,7 +859,7 @@ def _url_for_storage(path: str) -> str:
         sp = Path(STORAGE_DIR).resolve()
         if fp.is_relative_to(sp):
             rel = fp.relative_to(sp)
-            return "/" + rel.as_posix()
+            return "/storage/" + rel.as_posix()
     except Exception:
         pass
     return path
@@ -1024,7 +1030,7 @@ def _scope_id(user: dict) -> Optional[int]:
 # --------------------------------------------------------------------------
 # Static files (frames, annotations) + character SVGs
 # --------------------------------------------------------------------------
-@app.get("/storage/{folder}/{file_name}")
+@app.get("/storage/{folder}/{file_name:path}")
 def storage_file(folder: str, file_name: str):
     path = (STORAGE_DIR / folder / file_name).resolve()
     if not path.is_file():

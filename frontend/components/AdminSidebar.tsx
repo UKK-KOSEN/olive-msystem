@@ -19,8 +19,8 @@ const nav: { href: string; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
-    href: '/versions',
-    label: 'バージョン',
+    href: '/algorithm',
+    label: 'システム構成・バージョン',
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 12a9 9 0 1 1-9-9" />

@@ -20,7 +20,7 @@ export default function AdminLayout({
       if (!user) {
         router.replace('/login');
       } else if (user.role !== 'admin') {
-        router.replace('/');
+        router.replace('/forbidden');
       } else {
         setChecked(true);
       }

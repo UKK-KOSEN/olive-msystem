@@ -156,14 +156,19 @@ export function ObservationDetail({ obs }: { obs: Observation }) {
             {maturityBreakdown && Object.keys(maturityBreakdown).length > 0 && (
               <DetailItem
                 label="成熟度"
-                value={Object.entries(maturityBreakdown).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                value={Object.entries(maturityBreakdown)
+                  .map(([k, v]) => `${MATURITY_JA[k] ?? k}: ${v}`)
+                  .join(', ')}
                 wide
               />
             )}
             {wrinkleSummary && Object.keys(wrinkleSummary).length > 0 && (
               <DetailItem
                 label="シワ分布"
-                value={Object.entries(wrinkleSummary).filter(([, v]) => (v as number) > 0).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                value={Object.entries(wrinkleSummary)
+                  .filter(([, v]) => (v as number) > 0)
+                  .map(([k, v]) => `${WRINKLE_JA[k] ?? k}: ${v}`)
+                  .join(', ')}
                 wide
               />
             )}
@@ -226,13 +231,63 @@ function DetailItem({
   );
 }
 
+const MATURITY_JA: Record<string, string> = {
+  green: '未熟（緑）',
+  yellow_green: '黄緑（やや熟）',
+  purple: '紫（中間）',
+  black: '完熟（黒）',
+  yellow: '黄',
+};
+
+const WRINKLE_JA: Record<string, string> = {
+  smooth: '滑らか',
+  slightly_wrinkled: 'ややシワあり',
+  wrinkled: 'シワあり',
+  heavily_wrinkled: 'シワが強い',
+};
+
+const SECTIONS = new Set([
+  '検出の説明',
+  '概要',
+  '詳細分析',
+  'DETECTION EXPLANATION',
+  'SUMMARY',
+  'DETAILED ANALYSIS',
+]);
+
 /**
- * Prominent explain section: shows SUMMARY first, full report collapsible.
+ * Parse olive-p report text into (header, content-lines) sections.
+ */
+function parseSections(text: string): { title: string; content: string[] }[] {
+  const sections: { title: string; content: string[] }[] = [];
+  let current = { title: '', content: [] as string[] };
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed && SECTIONS.has(trimmed)) {
+      if (current.title || current.content.length > 0) {
+        sections.push(current);
+      }
+      current = { title: trimmed, content: [] };
+    } else {
+      current.content.push(line);
+    }
+  }
+  if (current.title || current.content.length > 0) {
+    sections.push(current);
+  }
+  return sections;
+}
+
+/**
+ * Prominent explain section: shows the summary first, full report collapsible.
  */
 function ExplainSection({ text }: { text: string }) {
-  // Extract SUMMARY section for quick view
-  const summaryMatch = text.match(/SUMMARY\n={20,}\n([\s\S]*?)(?=\n[A-Z]{2,}\n={20,}|$)/);
-  const summary = summaryMatch?.[1]?.trim();
+  const sections = parseSections(text);
+  const summarySection =
+    sections.find((s) => s.title === '概要' || s.title === 'SUMMARY') ??
+    sections.find((s) => s.title === '詳細分析' || s.title === 'DETAILED ANALYSIS');
+  const summary = summarySection?.content.join('\n').trim();
 
   return (
     <div className="rounded-lg border border-neutral-200 bg-neutral-50 overflow-hidden">
@@ -278,24 +333,7 @@ function ExplainSection({ text }: { text: string }) {
  * and formatted content for farmer-friendly display.
  */
 function ExplainText({ text }: { text: string }) {
-  const lines = text.split('\n');
-  const sections: { title: string; content: string[] }[] = [];
-  let current = { title: '', content: [] as string[] };
-
-  for (const line of lines) {
-    // Section headers: lines that are all caps or start with "DETECTION", "SUMMARY", "DETAILED"
-    if (/^[A-Z]{2,}/.test(line.trim()) && line.trim().length < 60 && !line.includes(':')) {
-      if (current.title || current.content.length > 0) {
-        sections.push(current);
-      }
-      current = { title: line.trim(), content: [] };
-    } else {
-      current.content.push(line);
-    }
-  }
-  if (current.title || current.content.length > 0) {
-    sections.push(current);
-  }
+  const sections = parseSections(text);
 
   // If no sections found, just render as plain text
   if (sections.length === 0 || (sections.length === 1 && !sections[0].title)) {
@@ -336,8 +374,8 @@ function ExplainText({ text }: { text: string }) {
                   </div>
                 );
               }
-              // Highlight labels like "WARNING:" or "NOTE:"
-              if (/^(WARNING|NOTE):/.test(trimmed)) {
+              // Highlight warnings such as "警告:" or "WARNING:"
+              if (/^(警告|注意|補足|WARNING|NOTE):/.test(trimmed)) {
                 return (
                   <div key={j} className="font-medium text-amber-700 bg-amber-50 rounded px-2 py-0.5">
                     {trimmed}
