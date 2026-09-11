@@ -546,7 +546,7 @@ def list_videos(status: Optional[str] = Query(None), user: dict = Depends(get_cu
     uid = None if user["role"] == "admin" else user["id"]
     videos = store.list_videos(status=status, user_id=uid)
     for v in videos:
-        v["storage_path"] = "/" + str(Path(v["storage_path"]).as_posix())
+        v["storage_path"] = "/media/" + Path(v["storage_path"]).name
     return videos
 
 
@@ -1033,7 +1033,16 @@ def _scope_id(user: dict) -> Optional[int]:
 @app.get("/storage/{folder}/{file_name:path}")
 def storage_file(folder: str, file_name: str):
     path = (STORAGE_DIR / folder / file_name).resolve()
-    if not path.is_file():
+    if not path.is_relative_to(STORAGE_DIR.resolve()) or not path.is_file():
+        raise HTTPException(404, "file not found")
+    return FileResponse(path)
+
+
+@app.get("/media/{file_name:path}")
+def media_file(file_name: str):
+    """Serve uploaded video files (browser <video> streaming, Range enabled)."""
+    path = (UPLOAD_DIR / file_name).resolve()
+    if not path.is_relative_to(UPLOAD_DIR.resolve()) or not path.is_file():
         raise HTTPException(404, "file not found")
     return FileResponse(path)
 

@@ -19,6 +19,7 @@ import { useAuth } from '@/lib/auth';
 import { TrendChart, StatePill, healthJa, healthColor } from '@/components/charts';
 import { SoilDisplay, SoilInputPanel } from '@/components/SoilComponent';
 import { UpscaledBadge } from '@/components/UpscaledBadge';
+import VideoPreview from '@/components/VideoPreview';
 import { PageHeader } from '@/components/PageHeader';
 import ErrorNotice from '@/components/ErrorNotice';
 import {
@@ -91,6 +92,7 @@ export default function Dashboard() {
   const [droneModes, setDroneModes] = useState<Record<number, boolean>>({});
   const [upscaleModes, setUpscaleModes] = useState<Record<number, boolean>>({});
   const [soilStatus, setSoilStatus] = useState<SoilStatus | null>(null);
+  const [previewId, setPreviewId] = useState<number | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -726,6 +728,12 @@ export default function Dashboard() {
                   </button>
                   <StatusBadge status={v.status} />
                   <button
+                    onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
+                    className="btn-secondary"
+                  >
+                    {previewId === v.id ? 'プレビューを閉じる' : '動画プレビュー'}
+                  </button>
+                  <button
                     onClick={() => runAnalysisWithSoil(v, timeSpec[v.id])}
                     disabled={v.status === 'processing' || running === v.id}
                     className="btn-primary"
@@ -733,6 +741,12 @@ export default function Dashboard() {
                     {running === v.id ? '開始中…' : '解析を実行'}
                   </button>
                 </div>
+
+                {previewId === v.id && v.storage_path && (
+                  <div className="mt-4 border-t border-neutral-100 pt-4">
+                    <VideoPreview src={v.storage_path} title={v.filename} />
+                  </div>
+                )}
 
                 {selected === v.id && (
                   <div className="mt-4 border-t border-neutral-100 pt-4">

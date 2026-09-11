@@ -18,6 +18,7 @@ import { useSite } from '@/lib/site';
 import { healthJa, healthColor, TrendChart } from '@/components/charts';
 import { IconOlive } from '@/components/icons';
 import ErrorNotice from '@/components/ErrorNotice';
+import VideoPreview from '@/components/VideoPreview';
 
 function fmtBytes(bytes: number | null | undefined): string {
   if (!bytes) return '—';
@@ -444,8 +445,9 @@ function DataSection({
   onChanged: () => void;
   flash: (m: { kind: 'ok' | 'err'; text: string }) => void;
 }) {
-  const [confirmClear, setConfirmClear] = useState(false);
+const [confirmClear, setConfirmClear] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [previewId, setPreviewId] = useState<number | null>(null);
 
   const clean = async () => {
     setBusy('clear');
@@ -524,13 +526,26 @@ function DataSection({
         <p className="text-sm text-neutral-400">動画なし</p>
       ) : (
         <ul className="divide-y divide-neutral-100">
-          {videos.map((v) => (
-            <li key={v.id} className="flex items-center gap-3 py-2">
-              <span className="min-w-0 flex-1 truncate text-sm text-neutral-700">{v.filename}</span>
-              <span className="text-xs text-neutral-400">{fmtBytes(v.size_bytes)}</span>
-              <button onClick={() => delVideo(v.id)} disabled={busy === `v${v.id}`} className="btn-danger btn-sm">
-                削除
-              </button>
+{videos.map((v) => (
+            <li key={v.id} className="py-2">
+              <div className="flex items-center gap-3">
+                <span className="min-w-0 flex-1 truncate text-sm text-neutral-700">{v.filename}</span>
+                <span className="text-xs text-neutral-400">{fmtBytes(v.size_bytes)}</span>
+                <button
+                  onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
+                  className="btn-secondary btn-sm"
+                >
+                  {previewId === v.id ? '閉じる' : '再生'}
+                </button>
+                <button onClick={() => delVideo(v.id)} disabled={busy === `v${v.id}`} className="btn-danger btn-sm">
+                  削除
+                </button>
+              </div>
+              {previewId === v.id && v.storage_path && (
+                <div className="mt-2">
+                  <VideoPreview src={v.storage_path} title={v.filename} />
+                </div>
+              )}
             </li>
           ))}
         </ul>
