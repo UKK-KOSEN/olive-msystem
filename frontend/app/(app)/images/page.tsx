@@ -313,9 +313,9 @@ export default function ImageAnalysisPage() {
                                 className="mt-0.5 h-4 w-4 rounded accent-violet-600"
                               />
                               <span>
-                                <span className="font-semibold text-violet-800">AI高解像度解析（x4）</span>
+                                <span className="font-semibold text-violet-800">高解像度解析（4倍）</span>
                                 <span className="mt-0.5 block text-[10px] leading-snug text-violet-600">
-                                  低解像度の画像をAIで4倍に高画質化してから解析します。高解像度でも精度よく検出できます（処理時間がかかります）。
+                                  低解像度の画像を4倍に高画質化してから解析します。高解像度でも精度よく検出できます（処理時間がかかります）。
                                 </span>
                               </span>
                             </label>

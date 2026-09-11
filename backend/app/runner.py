@@ -70,7 +70,7 @@ class Runner:
 
     def enqueue(self, video_id: int, times: list[float], tree_id: Optional[str] = None,
                 soil_manual: Optional[dict] = None, drone_mode: bool = False,
-                upscale: Optional[bool] = None, compare: bool = False) -> dict:
+                upscale: Optional[bool] = None) -> dict:
         with self._lock:
             job = {
                 "job_id": self._job_id,
@@ -80,7 +80,6 @@ class Runner:
                 "soil_manual": soil_manual,
                 "drone_mode": drone_mode,
                 "upscale": upscale,
-                "compare": compare,
                 "status": "queued",
                 "enqueued_at": time.time(),
                 "started_at": None,
@@ -152,7 +151,6 @@ class Runner:
                 str(video_path), job["times"], str(out_dir), source,
                 drone_mode=bool(job.get("drone_mode")),
                 upscale=job.get("upscale"),
-                compare=bool(job.get("compare")),
                 progress_cb=_progress,
             )
             job["stage"] = "saving"
@@ -191,28 +189,6 @@ class Runner:
                         rec[key + "_url"] = f"/storage/{rel.as_posix()}"
                 self.store.add_observation("video", rec, video_id=job["video_id"])
                 saved += 1
-                # Store comparison (non-upscaled) observation alongside the main one
-                comp = rec.pop("_comparison", None)
-                if comp and comp.get("ok"):
-                    comp["tree_id"] = rec.get("tree_id")
-                    comp["observed_at"] = rec.get("observed_at")
-                    comp["soil_moisture"] = rec.get("soil_moisture")
-                    comp["soil_source"] = rec.get("soil_source")
-                    comp["health_state"] = health_state(comp)
-                    try:
-                        comp["explain_text"] = explain_detection_ja(comp)
-                    except Exception:
-                        comp["explain_text"] = None
-                    for key in ("_frame_raw", "_frame_annotated"):
-                        if comp.get(key):
-                            p = Path(comp[key]).resolve()
-                            try:
-                                rel = p.relative_to(STORAGE_DIR.resolve())
-                            except ValueError:
-                                rel = Path(p.name)
-                            comp[key + "_url"] = f"/storage/{rel.as_posix()}"
-                    self.store.add_observation("video", comp, video_id=job["video_id"])
-                    saved += 1
             job["result"] = {
                 "saved": saved,
                 "requested": len(job["times"]),

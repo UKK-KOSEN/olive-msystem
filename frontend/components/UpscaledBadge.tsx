@@ -4,7 +4,7 @@ export function UpscaledBadge({ model, large }: { model?: string | null; large?:
       className={`inline-flex items-center gap-1 rounded-full bg-violet-600 font-semibold text-white shadow-sm ${
         large ? 'px-2.5 py-1 text-xs' : 'px-2 py-0.5 text-[10px]'
       }`}
-      title={`この観測データはAIで高解像度化（${model || 'realesrgan-x4plus'}）して解析されました`}
+      title={`この観測データは高解像度化（${model || 'realesrgan-x4plus'}）して解析されました`}
     >
       <svg viewBox="0 0 20 20" fill="currentColor" className={large ? 'h-3.5 w-3.5' : 'h-3 w-3'}>
         <path
@@ -13,7 +13,7 @@ export function UpscaledBadge({ model, large }: { model?: string | null; large?:
           clipRule="evenodd"
         />
       </svg>
-      AI高解像度
+      高解像度解析
       {model ? <span className="opacity-80">{model}</span> : null}
     </span>
   );

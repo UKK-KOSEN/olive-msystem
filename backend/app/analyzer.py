@@ -86,7 +86,7 @@ class OliveAnalyzer:
         self._upscaler_video = None
 
     def _get_upscaler(self, video: bool = False):
-        """Return a shared AI upscaler (realesrgan-ncnn-vulkan), or None.
+        """Return a shared upscaler (realesrgan-ncnn-vulkan), or None.
 
         The upscaler instance is created lazily once and reused across all
         calls so the (heavy) subprocess tool is only invoked when a low-res
@@ -126,7 +126,7 @@ class OliveAnalyzer:
         Returns the full result dict (with numpy masks intact for drawing)
         plus the annotated BGR image.
 
-        ``upscale``: True to AI-upscale low-res images before detection,
+        ``upscale``: True to upscale low-res images before detection,
         False to disable. None (default) means "auto": upscaling is enabled
         for drone mode (low-res aerial input), matching olive-p's behaviour.
 
@@ -141,16 +141,11 @@ class OliveAnalyzer:
 
     def analyze_image_file(self, image_path: str, output_dir: str, source: str,
                            drone_mode: bool = False,
-                           upscale: Optional[bool] = None,
-                           compare: bool = False) -> dict:
+                           upscale: Optional[bool] = None) -> dict:
         """Analyse a single still image file and write annotated/raw copies.
 
         Returns a JSON-serialisable record (mirrors the per-time records
         produced by analyze_video_at_times, with label 'image').
-
-        When ``compare=True`` and upscaling actually occurred, the returned
-        dict includes a ``_comparison`` key holding the analysis result
-        produced on the original (non-upscaled) frame.
         """
         import cv2
         frame = cv2.imread(str(image_path))
@@ -170,31 +165,6 @@ class OliveAnalyzer:
         rec["timestamp_sec"] = 0.0
         rec["label"] = "image"
         rec["source"] = source
-        rec["ok"] = True
-
-        # Run a second pass on the original (non-upscaled) frame for comparison
-        if compare and rec.get("upscaled"):
-            comp = self.compare_analysis(frame, source, drone_mode=drone_mode)
-            # Save comparison annotated image
-            comp_annotated_path = out / "annotated_original.jpg"
-            if comp.get("_annotated_frame") is not None:
-                _imwrite(comp_annotated_path, comp.pop("_annotated_frame"))
-                comp["_frame_annotated"] = str(comp_annotated_path)
-            rec["_comparison"] = comp
-
-        return rec
-
-    def compare_analysis(self, image_bgr, source: str,
-                         drone_mode: bool = False) -> dict:
-        """Analyse the original (non-upscaled) frame for comparison.
-
-        Returns a JSON-serialisable result dict with ``upscaled=False``.
-        """
-        result, annotated = self.analyze_image(image_bgr, source,
-                                               drone_mode=drone_mode,
-                                               upscale=False)
-        rec = {k: v for k, v in result.items() if not isinstance(v, np.ndarray)}
-        rec["_annotated_frame"] = annotated
         rec["ok"] = True
         return rec
 
@@ -219,7 +189,6 @@ class OliveAnalyzer:
                                output_dir: str, source: str,
                                drone_mode: bool = False,
                                upscale: Optional[bool] = None,
-                               compare: bool = False,
                                progress_cb=None) -> list[dict]:
         """Analyse the video at the given timestamps (in seconds).
 
@@ -231,10 +200,6 @@ class OliveAnalyzer:
 
         ``progress_cb(done, total, label)`` (optional) is invoked before each
         frame is analysed so callers can surface live job progress.
-
-        When ``compare=True`` and upscaling actually occurred for a frame, a
-        second non-upscaled analysis is run and attached as ``_comparison``
-        on that frame's result dict.
 
         Returns a list of per-time result dicts (JSON-serialisable).
         """
@@ -282,16 +247,6 @@ class OliveAnalyzer:
                 rec["timestamp_sec"] = t
                 rec["label"] = label
                 rec["ok"] = True
-
-                # Run non-upscaled comparison pass when requested
-                if compare and rec.get("upscaled"):
-                    comp = self.compare_analysis(frame, f"{source}@{label}",
-                                                 drone_mode=drone_mode)
-                    comp_annotated_path = out / f"annotated_original_{label}.jpg"
-                    if comp.get("_annotated_frame") is not None:
-                        _imwrite(comp_annotated_path, comp.pop("_annotated_frame"))
-                        comp["_frame_annotated"] = str(comp_annotated_path)
-                    rec["_comparison"] = comp
 
                 results.append(rec)
         finally:

@@ -176,7 +176,7 @@ export default function TaskBar() {
                 )}
                 {j.upscale && (
                   <span className="inline-flex items-center rounded bg-violet-600 px-1.5 py-0.5 font-semibold text-white">
-                    AI高解像度
+                    高解像度解析
                   </span>
                 )}
                 {j.tree_id && (

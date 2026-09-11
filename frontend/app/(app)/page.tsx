@@ -1100,8 +1100,8 @@ function AnalyseControls({
               checked={droneMode ?? false}
               onChange={(e) => {
                 onDroneModeChange(e.target.checked);
-                // Drone/aerial input is low-res: automatically enable AI upscaling,
-                // matching olive-p's behaviour.
+                // Drone/aerial input is low-res: automatically enable high-resolution
+                // processing of the extracted frames, matching olive-p's behaviour.
                 if (e.target.checked && !upscale) onUpscaleChange(true);
               }}
               className="h-4 w-4 rounded accent-olive-600"
@@ -1116,9 +1116,9 @@ function AnalyseControls({
               className="mt-0.5 h-4 w-4 rounded accent-violet-600"
             />
             <span>
-              <span className="font-semibold text-violet-800">AI高解像度解析（x4）</span>
+              <span className="font-semibold text-violet-800">高解像度解析（4倍）</span>
               <span className="mt-0.5 block text-[10px] leading-snug text-violet-600">
-                低解像度のフレームをAIで4倍に高画質化してから解析します。高解像度でも精度よく検出できます（処理時間がかかります）。
+                低解像度のフレームを4倍に高画質化してから解析します。高解像度でも精度よく検出できます（処理時間がかかります）。
               </span>
             </span>
           </label>
@@ -1152,12 +1152,13 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
     );
   }
 
-  // Group by timestamp_sec (+ tree_id) so comparison rows don't duplicate.
-  // Each group has a "primary" display row and an optional "comparison" obs.
+  // Group by timestamp_sec (+ tree_id). Up-scaled and non-upscaled passes of
+  // the same frame were stored as separate observations during the comparison
+  // era; merge them so each frame shows as a single row (preferring the
+  // up-scaled, higher-quality result when both exist).
   interface RowGroup {
     key: string;
     primary: Observation;
-    comparison: Observation | null;
     timestamp_sec: number;
   }
 
@@ -1174,21 +1175,11 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
         other.tree_id === o.tree_id &&
         other.upscaled !== o.upscaled,
     );
-    // Prefer upscaled as primary if both exist
-    let primary: Observation;
-    let comparison: Observation | null = null;
-    if (pair) {
-      if (o.upscaled) {
-        primary = o;
-        comparison = pair;
-      } else {
-        primary = pair;
-        comparison = o;
-      }
-    } else {
-      primary = o;
-    }
-    groups.push({ key: tsKey, primary: primary!, comparison, timestamp_sec: o.timestamp_sec });
+    groups.push({
+      key: tsKey,
+      primary: pair ? (o.upscaled ? o : pair) : o,
+      timestamp_sec: o.timestamp_sec,
+    });
   }
 
   return (

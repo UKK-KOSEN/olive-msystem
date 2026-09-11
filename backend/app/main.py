@@ -660,8 +660,7 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
     try:
         rec = grader.analyze_image_file(str(image_path), str(out_dir), source,
                                         drone_mode=req.drone_mode,
-                                        upscale=req.upscale,
-                                        compare=req.compare)
+                                        upscale=req.upscale)
     except Exception as exc:
         store.update_image(image_id, status="error")
         raise HTTPException(500, f"analysis failed: {exc}")
@@ -784,7 +783,7 @@ def soil_moisture_status():
 def analyse_video(video_id: int, req: AnalyseTimesRequest, user: dict = Depends(get_current_user)):
     """Analyse an uploaded video at the given timestamps (seconds)."""
     return _enqueue(video_id, req.times, req.tree_id, req.soil_moisture, user,
-                    drone_mode=req.drone_mode, upscale=req.upscale, compare=req.compare)
+                    drone_mode=req.drone_mode, upscale=req.upscale)
 
 
 @app.post("/api/videos/{video_id}/analyse-times")
@@ -795,15 +794,14 @@ def analyse_video_text(video_id: int, req: AnalyseTimesTextRequest, user: dict =
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return _enqueue(video_id, times, req.tree_id, req.soil_moisture, user,
-                    drone_mode=req.drone_mode, upscale=req.upscale, compare=req.compare)
+                    drone_mode=req.drone_mode, upscale=req.upscale)
 
 
 def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
              soil_moisture: Optional[SoilMoistureInput] = None,
              user: dict = None,
              drone_mode: bool = False,
-             upscale: Optional[bool] = None,
-             compare: bool = False):
+             upscale: Optional[bool] = None):
     _owned_video(video_id, user)
     video = store.get_video(video_id)
     if video["status"] == "processing":
@@ -812,7 +810,7 @@ def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
         raise HTTPException(400, "no times given")
     job = runner.enqueue(video_id, sorted(set(round(t, 3) for t in times)), tree_id,
                          soil_manual=soil_moisture.dict() if soil_moisture else None,
-                         drone_mode=drone_mode, upscale=upscale, compare=compare)
+                         drone_mode=drone_mode, upscale=upscale)
     return {"job": job}
 
 
@@ -825,7 +823,7 @@ def _finalize(rows: list[dict]) -> list[dict]:
     for o in rows:
         result = o.get("result") or {}
         o["health_state"] = health_state(result)
-        # Expose AI-upscale flags at the top level so the UI can badge them
+        # Expose the upscale flags at the top level so the UI can badge them
         # without digging into the nested result blob.
         o["upscaled"] = result.get("upscaled")
         o["upscale_model"] = result.get("upscale_model")

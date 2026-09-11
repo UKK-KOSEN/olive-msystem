@@ -51,8 +51,7 @@ class AnalyseTimesRequest(BaseModel):
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
     drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
-    upscale: bool | None = Field(default=None, description="AI-upscale low-res frames (True force, False disable, None auto from drone_mode)")
-    compare: bool = Field(default=False, description="When upscale is enabled, also run a non-upscaled pass for side-by-side comparison")
+    upscale: bool | None = Field(default=None, description="Upscale low-res frames (True force, False disable, None auto from drone_mode)")
 
 
 class AnalyseTimesTextRequest(BaseModel):
@@ -61,8 +60,7 @@ class AnalyseTimesTextRequest(BaseModel):
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
     drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
-    upscale: bool | None = Field(default=None, description="AI-upscale low-res frames (True force, False disable, None auto from drone_mode)")
-    compare: bool = Field(default=False, description="When upscale is enabled, also run a non-upscaled pass for side-by-side comparison")
+    upscale: bool | None = Field(default=None, description="Upscale low-res frames (True force, False disable, None auto from drone_mode)")
 
 
 class SoilMoistureInput(BaseModel):
@@ -79,8 +77,7 @@ class AnalyseImageRequest(BaseModel):
     tree_id: str | None = None
     soil_moisture: SoilMoistureInput | None = None
     drone_mode: bool = Field(default=False, description="Drone/aerial (low-res) detection mode")
-    upscale: bool | None = Field(default=None, description="AI-upscale low-res frames (True force, False disable, None auto from drone_mode)")
-    compare: bool = Field(default=False, description="When upscale is enabled, also return analysis on the original non-upscaled image")
+    upscale: bool | None = Field(default=None, description="Upscale low-res frames (True force, False disable, None auto from drone_mode)")
 
 
 class HealthState(BaseModel):
