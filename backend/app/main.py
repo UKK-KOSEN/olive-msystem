@@ -1518,11 +1518,46 @@ def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_a
     from .sensor_alerts import _mask_secret as _mask_alerts_secret
     new_ch = ((cfg.get("alerts") or {}).get("channels") or {})
     old_ch = ((existing.get("alerts") or {}).get("channels") or {})
+    # Legacy scalar fields.
     for key, keep in (("webhook_token", 0), ("webhook_url", 16)):
         new_v = new_ch.get(key)
         old_v = old_ch.get(key)
         if old_v and isinstance(new_v, str) and new_v == _mask_alerts_secret(old_v, keep):
             new_ch[key] = old_v
+    # Restore the masked LINE Bot channel access token.
+    new_lb = new_ch.get("line_bot")
+    old_lb = old_ch.get("line_bot")
+    if isinstance(new_lb, dict) and isinstance(old_lb, dict):
+        n_tok = new_lb.get("channel_access_token")
+        o_tok = old_lb.get("channel_access_token")
+        if o_tok and isinstance(n_tok, str) and n_tok == _mask_alerts_secret(str(o_tok), 0):
+            new_lb["channel_access_token"] = o_tok
+    # Restore masked tokens/urls inside the webhooks list entry-by-entry.
+    new_wh = new_ch.get("webhooks") or []
+    old_wh = [w for w in (old_ch.get("webhooks") or []) if isinstance(w, dict)]
+    if isinstance(new_wh, list):
+        for nw in new_wh:
+            if not isinstance(nw, dict):
+                continue
+            n_url = nw.get("url")
+            n_tok = nw.get("token")
+            for ow in old_wh:
+                url_ok = (
+                    n_url
+                    and isinstance(n_url, str)
+                    and n_url == _mask_alerts_secret(str(ow.get("url", "")), 16)
+                )
+                tok_ok = (
+                    n_tok
+                    and isinstance(n_tok, str)
+                    and n_tok == _mask_alerts_secret(str(ow.get("token", "")), 0)
+                )
+                if url_ok or tok_ok:
+                    if url_ok:
+                        nw["url"] = ow["url"]
+                    if tok_ok:
+                        nw["token"] = ow["token"]
+                    break
     SOIL_MOISTURE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     SOIL_MOISTURE_CONFIG_PATH.write_text(
         yaml.safe_dump(cfg, allow_unicode=True, default_flow_style=False),

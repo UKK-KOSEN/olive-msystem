@@ -230,7 +230,7 @@ npm run start -- -p 3001
 ## 土壌水分センサーの異常監視・通知
 
 土壌水分センサーのデータが**飛んでこない**（停止）・水分値が**異常**・**API接続エラー**を
-検知し、アプリ内通知＋Webhook（Slack/Discord等）や LINE Notify へ通知します。
+検知し、アプリ内通知＋Webhook（Slack/Discord等）や LINE Notify / LINE BOT へ通知します。
 
 - 検知した瞬間に即時通知 → `remind_hours` の間隔で段階リマインド → 復旧時に「復旧しました」通知
 - 状態はDBに永続化され、サーバー再起動でも重複通知・再通知は発生しません
@@ -256,6 +256,7 @@ npm run start -- -p 3001
 | [docs/operations.md](docs/operations.md) | 起動・自動再起動・死活監視・バックアップ・ログ・トラブルシューティング |
 | [docs/farm-map.md](docs/farm-map.md) | 農園マップと樹木台帳の使い方 |
 | [docs/sensor-alerts.md](docs/sensor-alerts.md) | 土壌水分センサー異常監視・通知の設定と仕組み |
+| [docs/webhooks.md](docs/webhooks.md) | Webhook通知の詳細仕様・送信フォーマット・各サービス設定例 |
 | [docs/translation.md](docs/translation.md) | 解析レポート日本語訳の仕組み |
 
 ## 注意（セキュリティ / 運用）

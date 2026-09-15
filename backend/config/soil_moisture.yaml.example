@@ -25,8 +25,36 @@ cache_ttl: 60
 # anomaly persists; a recovery notification is sent when it clears.
 #
 # channels.inapp       deliver to the app's own notification feed (default true)
-# channels.webhook_url generic JSON webhook; if webhook_token is also set the
-#                      message is sent in LINE Notify format (Bearer token).
+# channels.webhooks    list of webhook targets.  Each entry:
+#   name       display label (used in the send history)
+#   url        full webhook URL
+#   format     json (default) | line_notify | text
+#   token      optional token; for format=line_notify this is the LINE Notify
+#              access token (sent as `Authorization: Bearer <token>`)
+#   headers    optional extra headers (map)
+#   timeout    request timeout in seconds (default 10)
+#   example (json, generic):
+#     - name: Slack
+#       url: https://hooks.slack.com/services/XXXX/YYYY/ZZZZ
+#       format: json
+#   example (LINE Notify):
+#     - name: LINE Notify
+#       url: https://notify-api.line.me/api/notify
+#       format: line_notify
+#       token: "YOUR_LINE_NOTIFY_TOKEN"
+#   example (plain text, e.g. ntfy):
+#     - name: ntfy
+#       url: https://ntfy.sh/my-topic
+#       format: text
+# channels.line_bot    LINE BOT (Messaging API) push notification:
+#   enabled                  set true to enable
+#   channel_access_token     ISSUE page -> Messaging API -> Channel access token
+#   to                       the LINE user id that receives the push messages
+#   endpoint                 API base (default https://api.line.me/v2/bot/message/push)
+#
+# Legacy single-webhook shortcut (kept for backward compatibility):
+#   channels.webhook_url + channels.webhook_token are migrated into the
+#   `webhooks` list automatically when the webhooks list is empty.
 alerts:
   enabled: true             # master switch for the monitoring thread
   check_interval_minutes: 10
@@ -37,6 +65,11 @@ alerts:
   remind_hours: [6, 24, 72, 168]   # escalation reminders while an alert is open
   recover_notify: true      # send a "recovered" notification afterwards
   channels:
-    inapp: true
-    webhook_url: ""         # e.g. your Slack/Discord/Teams webhook URL
-    webhook_token: ""       # LINE Notify token (optional)
+    inapp: true             # deliver to the app's own notification feed
+    webhooks: []            # list of {name, url, format, token, headers, timeout}
+    line_bot:
+      enabled: false
+      channel_access_token: ""
+      to: ""
+    webhook_url: ""         # legacy: single JSON/webhook URL
+    webhook_token: ""       # legacy: LINE Notify token (optional)

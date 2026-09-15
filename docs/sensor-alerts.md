@@ -1,8 +1,8 @@
 # 土壌水分センサーの異常監視・通知 (sensor alerts)
 
 土壌水分センサー（UKK-KOSEN Cloudflare D1 API）のデータが**飛んでこない**、または
-**水分値が異常**なときに、アプリ内通知と外部チャネル（Webhook / LINE Notify）へ
-確実に通知するシステムです。
+**水分値が異常**なときに、アプリ内通知と外部チャネル（Webhook / LINE Notify / LINE BOT）
+へ確実に通知するシステムです。
 
 ## 検知できる異常
 
@@ -48,8 +48,22 @@ alerts:
   recover_notify: true       # 復旧時に「復旧しました」を通知するか
   channels:
     inapp: true              # アプリ内通知（お知らせ）への配信
-    webhook_url: ""          # 汎用JSON Webhook（Slack/Discord/Teams等）
-    webhook_token: ""        # LINE Notify トークン（指定時はLINE形式で送信）
+    webhooks:                # 複数のWebhook（追加/削除可能）
+      # - name: Slack
+      #   url: https://hooks.slack.com/services/XXXX/YYYY/ZZZZ
+      #   format: json
+      # - name: LINE Notify
+      #   url: https://notify-api.line.me/api/notify
+      #   format: line_notify
+      #   token: "YOUR_LINE_NOTIFY_TOKEN"
+      # - name: ntfy
+      #   url: https://ntfy.sh/my-topic
+      #   format: text
+    line_bot:                # LINE BOT (Messaging API) プッシュ通知
+      enabled: false
+      channel_access_token: ""   # LINE DevelopersコンソールのMessaging API設定から取得
+      to: ""                     # 送信先のLINEユーザーID（U〜）
+      endpoint: "https://api.line.me/v2/bot/message/push"
 ```
 
 ## 通知チャネル
@@ -58,14 +72,36 @@ alerts:
 `notifications` テーブルへ `target_role="all"` で作成され、ダッシュボードのベル
 アイコンの未読数と `/notifications` ページで確認できます。すべてのユーザーに届きます。
 
-### Webhook（`webhook_url`）
-`{title, body, severity, type: "sensor_alert", service: "olive-msystem"}`
-をJSON POSTで送信します。Slack Incoming Webhook / Discord / MS Teams などで利用できます。
+### 複数Webhook（`webhooks` リスト）
+`channels.webhooks` に複数のWebhookエントリを追加できます。各エントリのフィールド:
 
-### LINE Notify（`webhook_token` 指定時）
-`Authorization: Bearer <token>` + `message=` のフォーム形式で
-LINE Notify のエンドポイント（`https://notify-api.line.me/api/notify`）へ送信する
-フォーマットになります。`webhook_url` には LINE Notify のURLを指定してください。
+> 詳細な仕様・送信リクエスト例・各サービス（Slack/Discord/Teams/LINE Notify/ntfy）の
+> 導入方法は **[docs/webhooks.md](webhooks.md)** を参照してください。
+
+| フィールド | 説明 |
+|-----------|------|
+| `name` | 管理画面で表示されるラベル |
+| `url` | 送信先の完全なURL |
+| `format` | `json`（汎用JSON・既定）、`line_notify`（LINE Notify形式）、`text`（プレーンテキスト） |
+| `token` | LINE Notifyトークン（format=`line_notify` 時に使用） |
+| `headers` | カスタムHTTPヘッダー（任意） |
+| `timeout` | タイムアウト秒数（既定10秒） |
+
+**フォーマットの使い分け:**
+
+- **`json`**: `{title, body, severity, type, service}` をJSONでPOST。Slack/Discord/Teams/generic。
+- **`line_notify`**: `Authorization: Bearer <token>` + `message=` のフォーム形式。LINE Notify API。
+- **`text`**: `text/plain` でメッセージ本文のみ送信。ntfy 等。
+
+### LINE BOT（Messaging API）
+LINE の公式 Messaging API を利用して、友だちのLINEユーザーにプッシュメッセージを送信します。
+設定フィールドは管理画面の「LINE BOT（Messaging API）でプッシュ通知」セクションで編集します。
+`webhooks` は汎用POST、LINE BOT は公式API宛 push という違いがあります。
+
+### レガシー互換（`webhook_url` / `webhook_token`）
+旧バージョンの `webhook_url` + `webhook_token` は `webhooks` リストの `line_notify` または
+`json` エントリに自動変換されるため、設定を維持できます。新規追加時は `webhooks` リストを
+使用してください。
 
 ## API
 
@@ -85,7 +121,15 @@ LINE Notify のエンドポイント（`https://notify-api.line.me/api/notify`�
              "level": 0, "data": "{...}" },
   "events": [ { "id": 1, "mode": "stale", "severity": "open",
                 "title": "…", "channels": "inapp", "created_at": "…" } ],
-  "channels": { "enabled": true, "channels": { "inapp": true, "webhook_url": "*****" } }
+  "channels": {
+    "enabled": true,
+    "check_interval_minutes": 10,
+    "channels": {
+      "inapp": true,
+      "webhooks": [{ "name": "Slack", "url": "*****ca8e91d2", "format": "json" }],
+      "line_bot": { "enabled": false, "channel_access_token": "" }
+    }
+  }
 }
 ```
 
@@ -97,18 +141,30 @@ LINE Notify のエンドポイント（`https://notify-api.line.me/api/notify`�
 { "results": [ { "channel": "inapp", "ok": true, "detail": null } ], "enabled": true }
 ```
 
+## LINE BOT（Messaging API）のセットアップ例
+
+1. [LINE Developersコンソール](https://developers.line.biz/) でプロバイダーとチャネル
+   （Messaging API）を作成。
+2. チャネルを友だちに追加し、そのユーザーのユーザーID（`U〜`）を控える
+   （Botが友だちでないユーザーにはプッシュが届かないため注意）。
+3. 管理画面「土壌センサー監視・通知」→「LINE BOT（Messaging API）でプッシュ通知」:
+   - **Channel access token**: コンソールの Messaging API タブから発行
+   - **送信先 LINE ユーザー ID**: `U...`
+4. 有効化して「テスト通知を送信」で確認。
+
 ## LINE Notify のセットアップ例
 
 1. https://notify-api.line.me/my/ でトークンを発行。
-2. 管理画面「土壌センサー監視・通知」で:
-   - Webhook URL: `https://notify-api.line.me/api/notify`
-   - LINE Notifyトークン: 発行したトークン
+2. 管理画面「土壌センサー監視・通知」で Webhook を追加:
+   - 名前: `LINE Notify`
+   - URL: `https://notify-api.line.me/api/notify`
+   - 形式: `LINE Notify`、トークン: 発行したトークン
 3. 「テスト通知を送信」で LINE に届くことを確認。
 
 ## Slack のセットアップ例
 
 1. Slack App から Incoming Webhook URL を作成。
-2. 管理画面で Webhook URL にそのURLを設定（トークンは空欄）。
+2. 管理画面で Webhook を追加（名前: `Slack`、URL: 作成したURL、形式: `JSON`、トークン空欄）。
 3. 「テスト通知を送信」で確認。
 
 ## DBテーブル
@@ -121,6 +177,7 @@ LINE Notify のエンドポイント（`https://notify-api.line.me/api/notify`�
 - **データはAPIには届いているのに通知が出ない**
   `alerts.enabled` が有効か、`stale_hours` / `dry_percent` / `wet_percent` の閾値を再確認。
 - **アプリ内通知にしか出ない**
-  Webhook URL（と必要な場合はトークン）を設定してください。
+  管理画面の「通知チャネル」で Webhook を追加し、正しいURLと形式を設定してください。
+  LINE BOT を利用する場合は「LINE BOT（Messaging API）でプッシュ通知」も有効にしてください。
 - **通知が多すぎる**
   `remind_hours` を長くする、`recover_notify: false` にする、`notify_risk: false` にする。

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Sensor anomaly monitoring & alerting for soil moisture.
 
 Layered on top of the existing :mod:`soil_moisture` integration, this module
@@ -15,14 +15,18 @@ Behaviour:
 * Immediate notification when an anomaly is first detected, then scheduled
   reminders while it persists, and finally a recovery notification when the
   sensor is healthy again.
-* Two channels (configured under ``alerts:`` in soil_moisture.yaml):
+* Channels (configured under ``alerts:`` in soil_moisture.yaml):
     - ``inapp``:        the app's own notification feed (SQLite)
-    - ``webhook``:      generic JSON webhook, LINE Notify if token set
+    - ``webhooks``:     any number of targets; per-entry ``format`` selects
+                        json (Slack/Discord/Teams/generic), line_notify, or
+                        plain text, with optional token/custom headers
+    - ``line_bot``:     LINE Messaging API push to a specific LINE user
 * Current state and an event history are persisted, so restarts never
   duplicate alerts and escalation picks up where it left off.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import urllib.error
@@ -51,6 +55,17 @@ DEFAULT_ALERTS: dict = {
     "recover_notify": True,
     "channels": {
         "inapp": True,
+        # Multiple declarative webhooks.
+        # each entry: {name, url, format: json|line_notify|text, token, headers, timeout}
+        "webhooks": [],
+        # LINE BOT (Messaging API).  `to` is the LINE user id that receives pushes.
+        "line_bot": {
+            "enabled": False,
+            "channel_access_token": "",
+            "to": "",
+            "endpoint": "https://api.line.me/v2/bot/message/push",
+        },
+        # Legacy single-webhook fields (kept for backward compatibility).
         "webhook_url": "",
         "webhook_token": "",
     },
@@ -69,8 +84,7 @@ def _deep_merge(base: dict, update: dict) -> None:
             base[key] = value
 
 
-def load_alerts_config() -> dict:
-    """Return the ``alerts:`` section of soil_moisture.yaml merged with defaults."""
+def _load_alerts_raw() -> dict:
     raw = {}
     if SOIL_MOISTURE_CONFIG_PATH.exists():
         try:
@@ -79,17 +93,40 @@ def load_alerts_config() -> dict:
                 raw = cfg.get("alerts") or {}
         except Exception:
             raw = {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_alerts_config() -> dict:
+    """Return the ``alerts:`` section of soil_moisture.yaml merged with defaults."""
+    raw = _load_alerts_raw()
     merged = json.loads(json.dumps(DEFAULT_ALERTS))
     if isinstance(raw, dict):
         _deep_merge(merged, raw)
+    # Backward compatibility: migrate legacy single webhook into webhooks list.
+    ch = merged.get("channels") or {}
+    if not ch.get("webhooks") and (ch.get("webhook_url") or "").strip():
+        ch["webhooks"] = [{
+            "name": "webhook",
+            "url": (ch.get("webhook_url") or "").strip(),
+            "format": "line_notify" if (ch.get("webhook_token") or "").strip() else "json",
+            "token": (ch.get("webhook_token") or "").strip(),
+        }]
     return merged
 
 
 def _mask_secret(value: str, keep: int = 0) -> str:
+    """Mask a secret for the admin editor.
+
+    The mask keeps the first ``keep`` characters and appends a short hash tag
+    of the original value (``*****`` + 8 hex chars) so that identical-looking
+    masks stay unambiguous and masked values can be matched back to the stored
+    secret on save.
+    """
     value = value or ""
     if not value:
         return ""
-    return value[:keep] + "*****"
+    tag = hashlib.sha1(value.encode("utf-8")).hexdigest()[:8]
+    return value[:keep] + "*****" + tag
 
 
 def mask_alerts_config(raw: dict) -> dict:
@@ -102,6 +139,19 @@ def mask_alerts_config(raw: dict) -> dict:
         ch["webhook_url"] = _mask_secret(str(ch["webhook_url"]), 16)
     if ch.get("webhook_token"):
         ch["webhook_token"] = _mask_secret(str(ch["webhook_token"]))
+    webhooks = []
+    for w in ch.get("webhooks") or []:
+        w2 = dict(w)
+        if w2.get("url"):
+            w2["url"] = _mask_secret(str(w2["url"]), 16)
+        if w2.get("token"):
+            w2["token"] = _mask_secret(str(w2["token"]))
+        webhooks.append(w2)
+    ch["webhooks"] = webhooks
+    lb = dict(ch.get("line_bot") or {})
+    if lb.get("channel_access_token"):
+        lb["channel_access_token"] = _mask_secret(str(lb["channel_access_token"]))
+    ch["line_bot"] = lb
     return {**merged, "channels": ch}
 
 
@@ -262,22 +312,50 @@ def evaluate() -> dict:
 # ---------------------------------------------------------------------------
 # Channel senders
 # ---------------------------------------------------------------------------
-def _send_webhook(acfg: dict, title: str, body: str, severity: str):
+def _build_webhook_entries(acfg: dict) -> list[dict]:
+    """Resolve configured webhooks (declarative list, plus legacy fallback)."""
     ch = acfg.get("channels") or {}
-    url = (ch.get("webhook_url") or "").strip()
-    token = (ch.get("webhook_token") or "").strip()
+    entries = []
+    for w in (ch.get("webhooks") or []):
+        if isinstance(w, dict) and (w.get("url") or "").strip():
+            entries.append(w)
+    if not entries and (ch.get("webhook_url") or "").strip():
+        entries.append({
+            "name": "webhook",
+            "url": (ch.get("webhook_url") or "").strip(),
+            "format": "line_notify" if (ch.get("webhook_token") or "").strip() else "json",
+            "token": (ch.get("webhook_token") or "").strip(),
+        })
+    return entries
+
+
+def _send_one_webhook(entry: dict, title: str, body: str, severity: str):
+    """POST to a single webhook entry.
+
+    ``format`` selects the payload style:
+      - ``json``        JSON object (default, for Slack/Discord/Teams/generic)
+      - ``line_notify`` LINE Notify form format (Bearer token optional)
+      - ``text``        raw text/plain message
+    """
+    url = (entry.get("url") or "").strip()
     if not url:
         return "skipped", None
+    fmt = (entry.get("format") or "json").lower()
+    timeout = float(entry.get("timeout") or 10)
     text = f"[{severity}] {title}\n{body}"
+    token = (entry.get("token") or "").strip()
+    headers = {str(k): str(v) for k, v in (entry.get("headers") or {}).items()}
     try:
-        if token:
-            req = urllib.request.Request(
-                url,
-                data=urllib.parse.urlencode({"message": text}).encode("utf-8"),
-                headers={"Authorization": "Bearer " + token},
-                method="POST",
-            )
-        else:
+        if fmt == "line_notify":
+            headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+            if token:
+                headers["Authorization"] = "Bearer " + token
+            data = urllib.parse.urlencode({"message": text}).encode("utf-8")
+        elif fmt == "text":
+            headers.setdefault("Content-Type", "text/plain; charset=utf-8")
+            data = text.encode("utf-8")
+        else:  # json
+            headers.setdefault("Content-Type", "application/json")
             payload = {
                 "title": title,
                 "body": body,
@@ -285,15 +363,50 @@ def _send_webhook(acfg: dict, title: str, body: str, severity: str):
                 "type": "sensor_alert",
                 "service": "olive-msystem",
             }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-        with urllib.request.urlopen(req, timeout=10):
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout):
             pass
         return "ok", None
+    except urllib.error.HTTPError as exc:
+        return "error", f"HTTP {exc.code}"
+    except Exception as exc:
+        return "error", str(exc)
+
+
+def _send_line_bot(acfg: dict, title: str, body: str, severity: str):
+    """Send a push message via LINE Messaging API (LINE BOT)."""
+    ch = acfg.get("channels") or {}
+    lb = ch.get("line_bot") or {}
+    if not lb.get("enabled"):
+        return "skipped", None
+    token = (lb.get("channel_access_token") or "").strip()
+    to = (lb.get("to") or "").strip()
+    if not token or not to:
+        return "error", "LINE Bot: channel_access_token / to が未設定です"
+    endpoint = (lb.get("endpoint") or "https://api.line.me/v2/bot/message/push").strip()
+    text = f"[{severity}] {title}\n{body}"
+    payload = {"to": to, "messages": [{"type": "text", "text": text}]}
+    try:
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": "Bearer " + token,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                return "error", f"LINE API HTTP {resp.status}"
+        return "ok", None
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            detail = str(exc)
+        return "error", f"HTTP {exc.code}: {detail}"
     except Exception as exc:
         return "error", str(exc)
 
@@ -313,14 +426,27 @@ def send_channels(store, acfg: dict, title: str, body: str, severity: str) -> li
     if ch.get("inapp", True):
         ok, err = _send_inapp(store, title, body, severity)
         results.append({"channel": "inapp", "ok": ok == "ok", "detail": err})
-    if (ch.get("webhook_url") or "").strip():
-        ok, err = _send_webhook(acfg, title, body, severity)
-        results.append({"channel": "webhook", "ok": ok == "ok", "detail": err})
+    for entry in _build_webhook_entries(acfg):
+        ok, err = _send_one_webhook(entry, title, body, severity)
+        results.append({
+            "channel": "webhook",
+            "name": (entry.get("name") or "webhook").strip() or "webhook",
+            "ok": ok == "ok",
+            "detail": err,
+        })
+    ok, err = _send_line_bot(acfg, title, body, severity)
+    if ok != "skipped":
+        results.append({"channel": "line_bot", "ok": ok == "ok", "detail": err})
     return results
 
 
 def _used_channels(results: list[dict]) -> str:
-    return ",".join(c["channel"] for c in results if c["ok"])
+    labels = []
+    for c in results:
+        if not c.get("ok"):
+            continue
+        labels.append(c.get("name") or c["channel"])
+    return ",".join(dict.fromkeys(labels))
 
 
 def _state_summary(ev: dict) -> dict:

@@ -484,8 +484,11 @@ function SensorAlertSection({
   const [notifyRisk, setNotifyRisk] = useState(true);
   const [recoverNotify, setRecoverNotify] = useState(true);
   const [inapp, setInapp] = useState(true);
-  const [webhookUrl, setWebhookUrl] = useState('');
-  const [webhookToken, setWebhookToken] = useState('');
+  const [webhooks, setWebhooks] = useState<{ name: string; url: string; format: string; token: string }[]>([]);
+  const [lineEnabled, setLineEnabled] = useState(false);
+  const [lineToken, setLineToken] = useState('');
+  const [lineTo, setLineTo] = useState('');
+  const [lineEndpoint, setLineEndpoint] = useState('');
 
   const refresh = useCallback(async () => {
     try {
@@ -507,8 +510,20 @@ function SensorAlertSection({
     setNotifyRisk(alerts?.notify_risk ?? true);
     setRecoverNotify(alerts?.recover_notify ?? true);
     setInapp(ch?.inapp ?? true);
-    setWebhookUrl(ch?.webhook_url || '');
-    setWebhookToken(ch?.webhook_token || '');
+    const wh = Array.isArray(ch?.webhooks) ? ch.webhooks : [];
+    setWebhooks(
+      wh.map((w: any) => ({
+        name: w?.name || 'webhook',
+        url: w?.url || '',
+        format: w?.format || 'json',
+        token: w?.token || '',
+      })),
+    );
+    const lb = ch?.line_bot || {};
+    setLineEnabled(!!lb?.enabled);
+    setLineToken(lb?.channel_access_token || '');
+    setLineTo(lb?.to || '');
+    setLineEndpoint(lb?.endpoint || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alerts, refresh]);
 
@@ -531,7 +546,23 @@ function SensorAlertSection({
           notify_risk: notifyRisk,
           recover_notify: recoverNotify,
           remind_hours: remindHours,
-          channels: { inapp, webhook_url: webhookUrl.trim(), webhook_token: webhookToken.trim() },
+          channels: {
+            inapp,
+            webhooks: webhooks
+              .map((w) => ({
+                name: w.name.trim() || 'webhook',
+                url: w.url.trim(),
+                format: (['json', 'line_notify', 'text'].includes(w.format) ? w.format : 'json'),
+                token: w.token.trim(),
+              }))
+              .filter((w) => w.url),
+            line_bot: {
+              enabled: lineEnabled,
+              channel_access_token: lineToken.trim(),
+              to: lineTo.trim(),
+              ...(lineEndpoint.trim() ? { endpoint: lineEndpoint.trim() } : {}),
+            },
+          },
         },
       };
       await api.saveSoilConfig(payload);
@@ -555,10 +586,10 @@ function SensorAlertSection({
       } else if (fail.length > 0) {
         onTest({
           kind: 'err',
-          text: `テスト送信: ${ok.map((c: any) => c.channel).join('、')} OK／${fail.map((c: any) => `${c.channel}（${c.detail || '失敗'}）`).join('、')}`,
+          text: `テスト送信: ${ok.map((c: any) => c.name || c.channel).join('、')} OK／${fail.map((c: any) => `${c.name || c.channel}（${c.detail || '失敗'}）`).join('、')}`,
         });
       } else {
-        onTest({ kind: 'ok', text: `テスト通知を送信しました（${ok.map((c: any) => c.channel).join('、')}）。` });
+        onTest({ kind: 'ok', text: `テスト通知を送信しました（${ok.map((c: any) => c.name || c.channel).join('、')}）。` });
       }
       refresh();
     } catch (e: any) {
@@ -578,6 +609,9 @@ function SensorAlertSection({
   const age = ev?.age_hours != null ? Math.round(ev.age_hours) : null;
   const bg = `${meta.dot}0d`;
   const border = `${meta.dot}33`;
+
+  const setWebhookField = (i: number, patch: Partial<{ name: string; url: string; format: string; token: string }>) =>
+    setWebhooks((prev) => prev.map((w, j) => (j === i ? { ...w, ...patch } : w)));
 
   return (
     <section className="card">
@@ -647,13 +681,63 @@ function SensorAlertSection({
           <input type="checkbox" checked={inapp} onChange={(e) => setInapp(e.target.checked)} />
           アプリ内通知（お知らせ）
         </label>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <TextField label="Webhook URL（Slack/Discord/Teams等）" value={webhookUrl} onChange={setWebhookUrl} placeholder="https://hooks.example.com/…" />
-          <TextField label="LINE Notifyトークン（任意）" value={webhookToken} onChange={setWebhookToken} placeholder="設定済みならマスク表示" mask />
+
+        <p className="mb-1 text-xs font-medium text-neutral-500">Webhook（複数設定可）</p>
+        <div className="space-y-2">
+          {webhooks.map((w, i) => (
+            <div key={i} className="grid gap-2 sm:grid-cols-[140px_1fr_110px_1fr_36px]">
+              <TextField label="名前" value={w.name} onChange={(v) => setWebhookField(i, { name: v })} placeholder="Slack" />
+              <TextField label="URL" value={w.url} onChange={(v) => setWebhookField(i, { url: v })} placeholder="https://hooks.example.com/…" />
+              <select
+                className="h-10 rounded-md border px-2 text-sm"
+                value={w.format}
+                onChange={(e) => setWebhookField(i, { format: e.target.value })}
+              >
+                <option value="json">JSON</option>
+                <option value="line_notify">LINE Notify</option>
+                <option value="text">テキスト</option>
+              </select>
+              <TextField label="トークン（任意）" value={w.token} onChange={(v) => setWebhookField(i, { token: v })} placeholder="設定済みならマスク表示" mask />
+              <div className="flex items-end pb-1">
+                <button
+                  type="button"
+                  onClick={() => setWebhooks(webhooks.filter((_, j) => j !== i))}
+                  className="btn-secondary h-10 w-9 px-0 text-sm"
+                  title="削除"
+                >
+                  —
+                </button>
+              </div>
+            </div>
+          ))}
+          <div>
+            <button
+              type="button"
+              onClick={() => setWebhooks([...webhooks, { name: '', url: '', format: 'json', token: '' }])}
+              className="btn-secondary text-sm"
+            >
+              ＋ Webhookを追加
+            </button>
+          </div>
         </div>
         <p className="mt-1 text-[11px] text-neutral-400">
-          トークン未指定ならJSON Webhook、指定時はLINE Notify形式で送信します。
+          JSON: 汎用（Slack/Discord/Teams）／LINE Notify形式／テキスト形式で送信します。トークンはLINE Notifyで使用します。
         </p>
+
+        <div className="mt-3">
+          <label className="mb-1 flex items-center gap-2 text-sm text-neutral-700">
+            <input type="checkbox" checked={lineEnabled} onChange={(e) => setLineEnabled(e.target.checked)} />
+            LINE BOT（Messaging API）でプッシュ通知
+          </label>
+          <div className={`grid gap-2 sm:grid-cols-2 ${lineEnabled ? '' : 'pointer-events-none opacity-50'}`}>
+            <TextField label="Channel access token" value={lineToken} onChange={setLineToken} placeholder="設定済みならマスク表示" mask />
+            <TextField label="送信先 LINE ユーザー ID" value={lineTo} onChange={setLineTo} placeholder="Uaaaaaaaaaa…" />
+            <TextField label="APIエンドポイント（任意）" value={lineEndpoint} onChange={setLineEndpoint} placeholder="https://api.line.me/v2/bot/message/push" />
+          </div>
+          <p className="mt-1 text-[11px] text-neutral-400">
+            LINE Developersコンソールの Messaging API 設定から Channel access token と、その友だちのユーザーIDを指定してください。
+          </p>
+        </div>
       </div>
 
       <div className="mt-3 flex gap-2">
