@@ -70,6 +70,12 @@ export default function TrackingPage() {
   const [trees, setTrees] = useState<TreeRecord[]>([]);
   const [treeId, setTreeId] = useState<string | null>(null);
 
+  // Support deep-links from the farm map: /tracking?tree=A-01
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tree');
+    if (t) setTreeId(t);
+  }, []);
+
   // bulk selection
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkAction, setBulkAction] = useState<'delete' | 'export' | null>(null);

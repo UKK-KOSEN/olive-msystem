@@ -18,5 +18,9 @@ backend/config/settings.json
 frontend/*.log*
 backend/*.log*
 
+# Runtime / ops artifacts
+logs/
+backups/
+
 # OS
 Thumbs.db

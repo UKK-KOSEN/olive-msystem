@@ -36,6 +36,23 @@ class PasswordResetRequest(BaseModel):
     new_password: str = Field(..., min_length=6, max_length=128)
 
 
+class TreeCreate(BaseModel):
+    tree_id: str = Field(..., min_length=1, max_length=64)
+    name: str | None = None
+    variety: str | None = None
+    row_num: int = Field(1, ge=1, le=200)
+    col_num: int = Field(1, ge=1, le=64)
+    note: str | None = None
+
+
+class TreeUpdate(BaseModel):
+    name: str | None = None
+    variety: str | None = None
+    row_num: int | None = Field(None, ge=1, le=200)
+    col_num: int | None = Field(None, ge=1, le=64)
+    note: str | None = None
+
+
 class SoilMoistureInput(BaseModel):
     """Optional soil moisture readings supplied by the operator."""
     sensor1_moisture_percent: float | None = None

@@ -20,8 +20,9 @@ goto check
 
 :start
 echo [watchdog] Starting frontend (Next.js on %PORT%)...
+if not exist logs mkdir logs
 pushd frontend
-call npm run start -- -p %PORT%
+call npm run start -- -p %PORT% >> ..\logs\frontend.log 2>&1
 set EXIT=%errorlevel%
 popd
 echo [watchdog] Frontend exited (code %EXIT%). Restarting in 3s...

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import shutil
+import time
 import traceback
 import uvicorn
 import yaml
@@ -19,20 +21,23 @@ from .analyzer import OliveAnalyzer, parse_time
 from .captured import extract_captured_at, parse_captured_candidate
 from .translate_report import explain_detection_ja
 from .auth import get_current_user, require_admin
-from .config import (CORS_ORIGINS, DB_PATH, MAX_UPLOAD_MB, PORT,
-                     SETTINGS_PATH, SOIL_MOISTURE_CONFIG_PATH,
+from .config import (CORS_ORIGINS, DATA_DIR, DB_PATH, MAX_UPLOAD_MB, PORT,
+                     ROOT, SETTINGS_PATH, SOIL_MOISTURE_CONFIG_PATH,
                      STORAGE_DIR, UPLOAD_DIR, ensure_dirs,
                      load_settings, save_settings)
 from .health import HEALTH_LABELS, health_state, aggregate_health_state
 from .models import (AnalyseImageRequest, AnalyseTimesRequest,
                      AnalyseTimesTextRequest, SoilMoistureInput,
                      RegisterRequest, LoginRequest, FarmerUpdateRequest,
-                     PasswordResetRequest)
+                     PasswordResetRequest, TreeCreate, TreeUpdate)
 from .runner import Runner
 from .soil_moisture import build_soil_data, integrate as integrate_soil, parse_observed_at_iso
 from .storage import Store, verify_password
 
 ensure_dirs()
+_LOGS_DIR = ROOT / "logs"
+_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+_BOOT_TIME = time.time()
 
 app = FastAPI(title="olive-msystem", version="1.0.0")
 
@@ -47,59 +52,62 @@ app.add_middleware(
 store = Store(DB_PATH)
 runner = Runner(store, workers=1)
 grader = OliveAnalyzer()
+
+# Log to both console and a rotating file, so a crash/restart can be
+# investigated later even if the console window was closed.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("olive-msystem")
+try:
+    _file_handler = logging.handlers.RotatingFileHandler(
+        _LOGS_DIR / "backend.log", maxBytes=5_000_000, backupCount=3,
+        encoding="utf-8")
+    _file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logging.getLogger().addHandler(_file_handler)
+    logger.info("backend booted (pid=%d, db=%s)", __import__("os").getpid(), DB_PATH)
+except Exception:
+    pass  # logging is best-effort; never block startup on it
 
 
-# ---- Sensor offline monitor (background thread) ---------------------------
-import threading, time as _time
+@app.get("/api/health")
+def health():
+    """Liveness probe for the ops monitor / load balancer (no auth)."""
+    db_ok = True
+    try:
+        store.count()
+    except Exception:
+        db_ok = False
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "service": "olive-msystem-backend",
+        "version": app.version,
+        "db_status": "ok" if db_ok else "error",
+        "db_path": str(DB_PATH),
+        "uptime_sec": int(time.time() - _BOOT_TIME),
+        "timestamp": _dt.now().astimezone().isoformat(timespec="seconds"),
+    }
+
+
+# ---- Sensor anomaly monitor (background thread) ---------------------------
+import threading
 from datetime import datetime as _dt
-
-_sensor_last_notified: Optional[_dt] = None
-_SENSOR_CHECK_INTERVAL = 3600  # check every 1 hour
-_SENSOR_STALE_HOURS = 6        # consider offline after 6h without data
-_SENSOR_NOTIFY_COOLDOWN = 86400  # notify at most once per 24h
+from .sensor_alerts import run_monitor as _sensor_alerts_run
+from .sensor_alerts import load_alerts_config as _alerts_cfg
 
 
 def _sensor_monitor_loop():
-    """Background thread: checks sensor freshness and sends daily notifications."""
-    global _sensor_last_notified
+    """Background thread: run the sensor-alert state machine periodically.
+
+    Runs once immediately after startup so anomalies are detected without
+    waiting, then sleeps for the configured check interval.
+    """
     while True:
-        _time.sleep(_SENSOR_CHECK_INTERVAL)
         try:
-            from .soil_moisture import build_soil_data, _parse_api_ts
-            data = build_soil_data(None)
-            sm = data.get("soil_moisture", {})
-            measured = sm.get("measured_at")
-            if not measured:
-                continue
-            ts = _parse_api_ts(measured)
-            if ts is None:
-                continue
-            now = _dt.utcnow().replace(tzinfo=ts.tzinfo) if ts.tzinfo else _dt.utcnow()
-            age_hours = (now - ts).total_seconds() / 3600
-            if age_hours < _SENSOR_STALE_HOURS:
-                continue  # sensor is online, no action needed
-
-            # Sensor is offline — send notification once per day
-            now_naive = _dt.utcnow()
-            if _sensor_last_notified is not None:
-                since_last = (now_naive - _sensor_last_notified).total_seconds()
-                if since_last < _SENSOR_NOTIFY_COOLDOWN:
-                    continue  # already notified recently
-
-            kit_id = sm.get("kit_id", "unknown")
-            age_int = int(age_hours)
-            title = "土壌水分センサー停止通知"
-            body = (
-                f"センサー（{kit_id}）のデータが {age_int} 時間以上更新されていません。"
-                f"最終更新: {measured}。物理的な確認をお勧めします。"
-            )
-            store.add_notification(title, body, created_by=0, target_role="all")
-            _sensor_last_notified = now_naive
-            logger.warning("sensor offline notification sent: %s (age %dh)", kit_id, age_int)
+            _sensor_alerts_run(store)
         except Exception:
             logger.exception("sensor monitor error")
+        interval_sec = max(float(_alerts_cfg().get("check_interval_minutes", 10)) * 60, 30)
+        time.sleep(interval_sec)
 
 
 _sensor_thread = threading.Thread(target=_sensor_monitor_loop, daemon=True)
@@ -271,6 +279,8 @@ def api_versions():
             ]},
             {"group": "土壌水分", "endpoints": [
                 {"path": "/api/soil-moisture/status", "method": "GET", "description": "センサー最新値・鮮度・API監視情報"},
+                {"path": "/api/sensor-alerts", "method": "GET", "description": "センサー異常監視の状態・履歴"},
+                {"path": "/api/admin/soil-config/test-notification", "method": "POST", "description": "通知チャネルのテスト送信（管理者）"},
             ]},
             {"group": "通知", "endpoints": [
                 {"path": "/api/notifications", "method": "GET", "description": "通知一覧"},
@@ -776,6 +786,23 @@ def soil_moisture_status():
     }
 
 
+@app.get("/api/sensor-alerts")
+def sensor_alerts_status(user: dict = Depends(get_current_user)):
+    """Current sensor-anomaly monitoring snapshot (evaluated state + history)."""
+    from .sensor_alerts import status as _alerts_status
+    return _alerts_status(store)
+
+
+@app.post("/api/admin/soil-config/test-notification")
+def admin_test_notifications(_: dict = Depends(require_admin)):
+    """Send a test message through every configured notification channel."""
+    from .sensor_alerts import test_channels, load_alerts_config
+    return {
+        "results": test_channels(store),
+        "enabled": load_alerts_config().get("enabled", True),
+    }
+
+
 # --------------------------------------------------------------------------
 # Time-specified analysis
 # --------------------------------------------------------------------------
@@ -903,15 +930,99 @@ def list_trees(user: dict = Depends(get_current_user)):
     return store.list_trees(user_id=_scope_id(user))
 
 
+@app.get("/api/trees/registry")
+def list_tree_registry(farmer_id: Optional[int] = Query(None),
+                       user: dict = Depends(get_current_user)):
+    """Registered trees (farm-map positions + profile) for a farmer."""
+    if user["role"] == "admin":
+        uid = farmer_id
+    else:
+        uid = user["id"]
+    if uid is None:
+        raise HTTPException(400, "farmer_id を指定してください")
+    rows = _with_tree_health(store.list_trees_registry(uid))
+    return {"trees": rows}
+
+
+@app.post("/api/trees/registry")
+def create_tree_registry(payload: TreeCreate,
+                         farmer_id: Optional[int] = Query(None),
+                         user: dict = Depends(get_current_user)):
+    uid = _target_id(user, farmer_id)
+    try:
+        row = store.create_tree(uid, payload.tree_id, payload.name, payload.variety,
+                                payload.row_num, payload.col_num, payload.note)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return _with_tree_health([row])[0]
+
+
+@app.put("/api/trees/registry/{tree_id}")
+def update_tree_registry(tree_id: str, payload: TreeUpdate,
+                         farmer_id: Optional[int] = Query(None),
+                         user: dict = Depends(get_current_user)):
+    uid = _target_id(user, farmer_id)
+    row = store.update_tree(uid, tree_id, payload.name, payload.variety,
+                            payload.row_num, payload.col_num, payload.note)
+    if row is None:
+        raise HTTPException(404, "樹木が見つかりません")
+    return _with_tree_health([row])[0]
+
+
+@app.delete("/api/trees/registry/{tree_id}")
+def delete_tree_registry(tree_id: str, farmer_id: Optional[int] = Query(None),
+                         user: dict = Depends(get_current_user)):
+    uid = _target_id(user, farmer_id)
+    if not store.delete_tree(uid, tree_id):
+        raise HTTPException(404, "樹木が見つかりません")
+    return {"ok": True}
+
+
+@app.post("/api/trees/registry/import")
+def import_tree_registry(farmer_id: Optional[int] = Query(None),
+                         user: dict = Depends(get_current_user)):
+    """Register every *observed* tree id that is not yet in the registry.
+
+    Positions are auto-assigned to the first free cells (row-major) so a
+    farm can start with data and refine the layout later.
+    """
+    uid = _target_id(user, farmer_id)
+    observed = store.list_trees(user_id=uid)
+    registered = store.list_trees_registry(user_id=uid)
+    have = {t["tree_id"] for t in registered}
+    todo = [t for t in observed if t["tree_id"] not in have]
+
+    occupied = {(t["row_num"], t["col_num"]) for t in registered}
+    COLS = 8
+    created = []
+    max_row = max((t["row_num"] for t in registered), default=0)
+    row, col = max_row + 1, 1
+    for t in sorted(todo, key=lambda d: d["tree_id"]):
+        while (row, col) in occupied:
+            col += 1
+            if col > COLS:
+                col = 1
+                row += 1
+        occupied.add((row, col))
+        rec = store.create_tree(uid, t["tree_id"], None, None, row, col, None)
+        created.append(rec["tree_id"])
+        col += 1
+        if col > COLS:
+            col = 1
+            row += 1
+
+    return {"imported": created, "count": len(created)}
+
+
 @app.get("/api/farm-map")
 def farm_map(farmer_id: Optional[int] = Query(None),
              user: dict = Depends(get_current_user)):
-    """Return tree nodes for the mock farm map with the latest per-tree health.
+    """Return tree nodes for the farm map with the latest per-tree health.
 
-    Reuses the existing ``tree_id`` management: every tree with at least one
-    observed record appears on the map.  Positions are deterministic
-    pseudo-random coordinates (stable across requests) so the layout behaves
-    like a fixed field map without persisting anything.
+    Layout combines the tree registry (explicit row/col positions in the
+    orchard) with every observed ``tree_id``.  Observed ids that are not yet
+    registered are auto-placed on free cells and flagged ``registered=false``
+    so the UI can invite the farmer to register them.
     """
     if user["role"] == "admin":
         uid = farmer_id
@@ -927,9 +1038,9 @@ def farm_map(farmer_id: Optional[int] = Query(None),
                 "display_name": u.get("display_name"), "farm_name": u.get("farm_name"),
             }
 
-    obs = store.list_observations(limit=2000, user_id=uid)
+    obs = store.list_observations(limit=5000, user_id=uid)
 
-    # Group observations by tree_id (only recorded trees).
+    # Health + stats per observed tree_id.
     grouped: dict[str, dict] = {}
     for o in obs:
         tid = o.get("tree_id")
@@ -953,40 +1064,119 @@ def farm_map(farmer_id: Optional[int] = Query(None),
         if seen and seen < (node["first_seen"] or ""):
             node["first_seen"] = seen
 
-    order = sorted(grouped.values(),
-                   key=lambda n: (n["last_seen"] or "", n["tree_id"]))
+    def observed_health(tid: str) -> tuple:
+        node = grouped.get(tid)
+        if not node or not node["latest"]:
+            return None, None, None, 0
+        latest = node["latest"]
+        st = health_state(latest.get("result") or {})
+        return st, node["last_seen"], node["first_seen"], node["observation_count"]
 
-    # Virtual field layout: fixed grid + stable jitter derived from the id.
+    registered = store.list_trees_registry(user_id=uid)
+    reg_by_id = {t["tree_id"]: t for t in registered}
+
     COLS = 8
     CELL_W, CELL_H = 118, 130
     PAD_X, PAD_Y = 70, 70
-    rows = max(1, (len(order) + COLS - 1) // COLS)
+
+    occupied: set = set()
     tree_nodes = []
-    for i, node in enumerate(order):
-        col, row = i % COLS, i // COLS
-        h = sum(int(c) for c in node["tree_id"].encode("utf-8"))
-        jx = (h % 26) - 13
-        jy = ((h >> 4) % 26) - 13
-        latest = node["latest"]
-        st = health_state(latest.get("result") or {}) if latest else None
+    for t in registered:
+        occupied.add((t["row_num"], t["col_num"]))
+    for t in sorted(registered, key=lambda d: (d["row_num"], d["col_num"])):
+        st, _, _, count = observed_health(t["tree_id"])
         tree_nodes.append({
-            "tree_id": node["tree_id"],
-            "x": PAD_X + col * CELL_W + CELL_W // 2 + jx,
-            "y": PAD_Y + row * CELL_H + CELL_H // 2 + jy,
+            "tree_id": t["tree_id"],
+            "name": t.get("name"),
+            "variety": t.get("variety"),
+            "row": t["row_num"],
+            "col": t["col_num"],
+            "x": PAD_X + (t["col_num"] - 1) * CELL_W + CELL_W // 2,
+            "y": PAD_Y + (t["row_num"] - 1) * CELL_H + CELL_H // 2,
+            "registered": True,
             "state": st,
-            "observed_at": node["last_seen"],
-            "first_seen": node["first_seen"],
-            "observation_count": node["observation_count"],
+            "last_seen": (grouped.get(t["tree_id"]) or {}).get("last_seen"),
+            "first_seen": (grouped.get(t["tree_id"]) or {}).get("first_seen"),
+            "observation_count": count,
         })
 
+    # Unregistered observed ids: fill free cells row-major (deterministic).
+    unregistered_ids = sorted(set(grouped) - set(reg_by_id))
+    max_row = max((t["row_num"] for t in registered), default=0)
+    row, col = max_row + 1, 1
+    for tid in unregistered_ids:
+        while (row, col) in occupied:
+            col += 1
+            if col > COLS:
+                col = 1
+                row += 1
+        occupied.add((row, col))
+        st, last_seen, first_seen, count = observed_health(tid)
+        tree_nodes.append({
+            "tree_id": tid,
+            "name": None,
+            "variety": None,
+            "row": row,
+            "col": col,
+            "x": PAD_X + (col - 1) * CELL_W + CELL_W // 2,
+            "y": PAD_Y + (row - 1) * CELL_H + CELL_H // 2,
+            "registered": False,
+            "state": st,
+            "last_seen": last_seen,
+            "first_seen": first_seen,
+            "observation_count": count,
+        })
+        col += 1
+        if col > COLS:
+            col = 1
+            row += 1
+
+    max_row = max((t["row"] for t in tree_nodes), default=1)
     return {
         "farmer": farmer,
         "map": {
             "width": PAD_X * 2 + COLS * CELL_W,
-            "height": PAD_Y * 2 + rows * CELL_H,
+            "height": PAD_Y * 2 + max_row * CELL_H,
         },
         "trees": tree_nodes,
+        "registered_count": len(registered),
+        "unregistered_count": len(unregistered_ids),
     }
+
+
+def _with_tree_health(rows: list[dict]) -> list[dict]:
+    """Attach latest health state + observation stats to registry rows."""
+    if not rows:
+        return rows
+    uid = rows[0].get("user_id")
+    obs = store.list_observations(limit=5000, user_id=uid)
+    grouped: dict[str, dict] = {}
+    for o in obs:
+        tid = o.get("tree_id")
+        if not tid:
+            continue
+        node = grouped.setdefault(tid, {"count": 0, "latest": None,
+                                        "last_seen": None, "first_seen": None})
+        node["count"] += 1
+        seen = o.get("observed_at") or ""
+        if node["latest"] is None or (seen and seen > (node["last_seen"] or "")):
+            node["latest"] = o
+            node["last_seen"] = seen or node["last_seen"]
+        if not node["first_seen"] or (seen and seen < node["first_seen"]):
+            node["first_seen"] = seen or node["first_seen"]
+    out = []
+    for r in rows:
+        node = grouped.get(r["tree_id"]) or {}
+        st = health_state((node.get("latest") or {}).get("result") or {}) if node.get("latest") else None
+        out.append({
+            **r,
+            "state": st,
+            "last_seen": node.get("last_seen"),
+            "first_seen": node.get("first_seen"),
+            "observed_at": node.get("last_seen"),
+            "observation_count": node.get("count", 0),
+        })
+    return out
 
 
 @app.delete("/api/observations")
@@ -1113,6 +1303,22 @@ def _scope_id(user: dict) -> Optional[int]:
     return user["id"]
 
 
+def _target_id(user: dict, farmer_id: Optional[int]) -> int:
+    """Resolve who a tree-registry mutation applies to.
+
+    Farmers always operate on their own registry; admins must name a farmer
+    explicitly so they can never mutate the wrong tenant.
+    """
+    if user["role"] == "admin":
+        if farmer_id is None:
+            raise HTTPException(400, "farmer_id を指定してください")
+        u = store.get_user(farmer_id)
+        if not u or u["role"] != "farmer":
+            raise HTTPException(404, "農家が存在しません")
+        return farmer_id
+    return user["id"]
+
+
 # --------------------------------------------------------------------------
 # Static files (frames, annotations) + character SVGs
 # --------------------------------------------------------------------------
@@ -1202,8 +1408,23 @@ def _soil_doc() -> dict:
     return {
         "configured": SOIL_MOISTURE_CONFIG_PATH.exists(),
         "config": masked,
+        "alerts": _mask_alerts(),
         "path": str(SOIL_MOISTURE_CONFIG_PATH),
     }
+
+
+def _mask_alerts() -> dict:
+    """Masked copy of the ``alerts:`` section for the admin editor."""
+    from .sensor_alerts import mask_alerts_config
+    cfg = {}
+    if SOIL_MOISTURE_CONFIG_PATH.exists():
+        try:
+            raw = yaml.safe_load(SOIL_MOISTURE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            if isinstance(raw, dict):
+                cfg = raw.get("alerts") or {}
+        except Exception:
+            cfg = {}
+    return mask_alerts_config(cfg)
 
 
 @app.get("/api/admin/stats")
@@ -1266,6 +1487,23 @@ def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_a
             existing = yaml.safe_load(SOIL_MOISTURE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
         except Exception:
             existing = {}
+    # Merge with the stored config so a partial payload never drops settings.
+    merged = dict(cfg)
+    for key, value in (existing or {}).items():
+        if key not in merged or merged[key] is None:
+            merged[key] = value
+    if isinstance(existing.get("alerts"), dict) and isinstance(merged.get("alerts"), dict):
+        for key, value in existing["alerts"].items():
+            if key not in merged["alerts"] or merged["alerts"][key] is None:
+                merged["alerts"][key] = value
+    if (isinstance(existing.get("alerts"), dict)
+            and isinstance(existing["alerts"].get("channels"), dict)
+            and isinstance(merged.get("alerts"), dict)
+            and isinstance(merged["alerts"].get("channels"), dict)):
+        for key, value in existing["alerts"]["channels"].items():
+            if key not in merged["alerts"]["channels"] or merged["alerts"]["channels"][key] is None:
+                merged["alerts"]["channels"][key] = value
+    cfg = merged
     new_key = cfg.get("api_key")
     old_key = existing.get("api_key", "")
     if new_key is None:
@@ -1276,6 +1514,15 @@ def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_a
         cfg["api_key"] = old_key
     elif isinstance(new_key, str) and new_key.startswith("****"):
         cfg["api_key"] = old_key
+    # Keep original alert-channel secrets when masked values are sent back.
+    from .sensor_alerts import _mask_secret as _mask_alerts_secret
+    new_ch = ((cfg.get("alerts") or {}).get("channels") or {})
+    old_ch = ((existing.get("alerts") or {}).get("channels") or {})
+    for key, keep in (("webhook_token", 0), ("webhook_url", 16)):
+        new_v = new_ch.get(key)
+        old_v = old_ch.get(key)
+        if old_v and isinstance(new_v, str) and new_v == _mask_alerts_secret(old_v, keep):
+            new_ch[key] = old_v
     SOIL_MOISTURE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     SOIL_MOISTURE_CONFIG_PATH.write_text(
         yaml.safe_dump(cfg, allow_unicode=True, default_flow_style=False),

@@ -85,12 +85,36 @@ export interface FarmMapTreeState {
   message?: string | null;
 }
 
+export interface FarmTreeRecord {
+  id: number;
+  user_id?: number | null;
+  tree_id: string;
+  name?: string | null;
+  variety?: string | null;
+  row_num: number;
+  col_num: number;
+  note?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  state?: FarmMapTreeState | null;
+  last_seen?: string | null;
+  first_seen?: string | null;
+  observed_at?: string | null;
+  observation_count?: number;
+}
+
 export interface FarmMapTree {
   tree_id: string;
+  name?: string | null;
+  variety?: string | null;
+  row: number;
+  col: number;
   x: number;
   y: number;
+  registered: boolean;
   state: FarmMapTreeState | null;
   observed_at?: string | null;
+  last_seen?: string | null;
   first_seen?: string | null;
   observation_count: number;
 }
@@ -99,6 +123,12 @@ export interface FarmMapData {
   farmer?: { id: number; username?: string | null; display_name?: string | null; farm_name?: string | null } | null;
   map: { width: number; height: number };
   trees: FarmMapTree[];
+  registered_count: number;
+  unregistered_count: number;
+}
+
+export interface TreeRegistryData {
+  trees: FarmTreeRecord[];
 }
 
 export interface OliveStatus {
@@ -163,6 +193,59 @@ export interface SoilStatus {
   error?: string;
 }
 
+export interface SensorAlertState {
+  key: string;
+  mode: string;
+  opened_at: string | null;
+  last_sent_at: string | null;
+  level: number;
+  data: string;
+}
+
+export interface SensorAlertEvent {
+  id: number;
+  mode: string;
+  severity: string;
+  title: string;
+  body: string;
+  channels: string;
+  created_at: string;
+}
+
+export interface SensorAlertEvaluation {
+  configured: boolean;
+  mode: string;
+  sensor_online: boolean;
+  severity: string;
+  title: string;
+  body: string;
+  kit_id: string | null;
+  measured_at: string | null;
+  age_hours: number | null;
+  sensor1: number | null;
+  sensor2: number | null;
+  temperature: number | null;
+  humidity: number | null;
+  risk: string | null;
+  health_message: string | null;
+  error: string | null;
+  alerts: Record<string, any>;
+}
+
+export interface SensorAlertsStatus {
+  enabled: boolean;
+  configured: boolean;
+  evaluation: SensorAlertEvaluation;
+  state: SensorAlertState | null;
+  events: SensorAlertEvent[];
+  channels: Record<string, any>;
+}
+
+export interface NotificationTestResult {
+  results: { channel: string; ok: boolean; detail?: string | null }[];
+  enabled: boolean;
+}
+
 export interface HealthThresholds {
   happy: number;
   good: number;
@@ -182,7 +265,7 @@ export interface AppSettings {
 
 export interface AdminStats {
   settings: { health_thresholds: HealthThresholds; site: SiteSettings };
-  soil: { configured: boolean; config: Record<string, any>; path: string };
+  soil: { configured: boolean; config: Record<string, any>; alerts: Record<string, any>; path: string };
   max_upload_mb: number;
   db: {
     observations: number;
@@ -541,6 +624,28 @@ export const api = {
   async listTrees(): Promise<TreeRecord[]> {
     return handle(await get('/api/trees'));
   },
+  async listFarmTrees(farmerId?: number): Promise<TreeRegistryData> {
+    const q = new URLSearchParams();
+    if (farmerId != null) q.set('farmer_id', String(farmerId));
+    const qs = q.toString();
+    return handle(await get(`/api/trees/registry${qs ? '?' + qs : ''}`));
+  },
+  async createFarmTree(payload: { tree_id: string; name?: string; variety?: string; row_num: number; col_num: number; note?: string }, farmerId?: number): Promise<FarmTreeRecord> {
+    const q = farmerId != null ? `?farmer_id=${farmerId}` : '';
+    return handle(await send(`/api/trees/registry${q}`, { method: 'POST', body: payload }));
+  },
+  async updateFarmTree(treeId: string, payload: { name?: string; variety?: string; row_num?: number; col_num?: number; note?: string }, farmerId?: number): Promise<FarmTreeRecord> {
+    const q = farmerId != null ? `?farmer_id=${farmerId}` : '';
+    return handle(await send(`/api/trees/registry/${encodeURIComponent(treeId)}${q}`, { method: 'PUT', body: payload }));
+  },
+  async deleteFarmTree(treeId: string, farmerId?: number): Promise<any> {
+    const q = farmerId != null ? `?farmer_id=${farmerId}` : '';
+    return handle(await send(`/api/trees/registry/${encodeURIComponent(treeId)}${q}`, { method: 'DELETE' }));
+  },
+  async importFarmTrees(farmerId?: number): Promise<{ imported?: string[]; count: number }> {
+    const q = farmerId != null ? `?farmer_id=${farmerId}` : '';
+    return handle(await send(`/api/trees/registry/import${q}`, { method: 'POST' }));
+  },
   async farmMap(farmerId?: number): Promise<FarmMapData> {
     const q = new URLSearchParams();
     if (farmerId != null) q.set('farmer_id', String(farmerId));
@@ -631,6 +736,13 @@ export const api = {
   // ---- soil ----
   async soilStatus(): Promise<SoilStatus> {
     return handle(await get('/api/soil-moisture/status'));
+  },
+  // ---- sensor alerting ----
+  async sensorAlerts(): Promise<SensorAlertsStatus> {
+    return handle(await get('/api/sensor-alerts'));
+  },
+  async testSensorNotification(): Promise<NotificationTestResult> {
+    return handle(await send('/api/admin/soil-config/test-notification', { method: 'POST' }));
   },
   // ---- admin ----
   async adminStats(): Promise<AdminStats> {

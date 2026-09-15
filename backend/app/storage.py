@@ -58,6 +58,9 @@ class Store:
     def _init_schema(self):
         con = self._connect()
         try:
+            # WAL journal: safer with the long-running service (concurrent
+            # readers + single writer) and makes online backups consistent.
+            con.execute("PRAGMA journal_mode=WAL")
             con.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS users (
@@ -125,6 +128,21 @@ class Store:
                     FOREIGN KEY(video_id) REFERENCES videos(id),
                     FOREIGN KEY(image_id) REFERENCES images(id)
                 );
+                CREATE TABLE IF NOT EXISTS trees (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    tree_id TEXT NOT NULL,
+                    name TEXT,
+                    variety TEXT,
+                    row_num INTEGER NOT NULL DEFAULT 1,
+                    col_num INTEGER NOT NULL DEFAULT 1,
+                    note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, tree_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_trees_user ON trees(user_id);
                 CREATE TABLE IF NOT EXISTS notifications (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
@@ -136,6 +154,23 @@ class Store:
                     is_read INTEGER DEFAULT 0,
                     FOREIGN KEY(created_by) REFERENCES users(id),
                     FOREIGN KEY(target_user_id) REFERENCES users(id)
+                );
+                CREATE TABLE IF NOT EXISTS sensor_alert_state (
+                    key TEXT PRIMARY KEY,
+                    mode TEXT NOT NULL,          -- ok|unconfigured|stale|api_error|risk
+                    opened_at TEXT,
+                    last_sent_at TEXT,
+                    level INTEGER DEFAULT 0,     -- number of reminders sent
+                    data TEXT DEFAULT '{}'
+                );
+                CREATE TABLE IF NOT EXISTS sensor_alert_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mode TEXT NOT NULL,          -- ok|unconfigured|stale|api_error|risk|test
+                    severity TEXT NOT NULL,      -- info|warning|critical|recovered|test
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    channels TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
                 );
                 """
             )
@@ -435,6 +470,62 @@ class Store:
             finally:
                 con.close()
 
+    # ---- sensor alert state / history ------------------------------------
+    def get_sensor_alert_state(self, key: str = "default") -> Optional[dict]:
+        con = self._connect()
+        try:
+            row = con.execute(
+                "SELECT * FROM sensor_alert_state WHERE key = ?", (key,)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            con.close()
+
+    def set_sensor_alert_state(self, key: str, mode: str, opened_at: Optional[str],
+                               last_sent_at: Optional[str], level: int,
+                               data: Optional[dict]) -> None:
+        with self._lock:
+            con = self._connect()
+            try:
+                con.execute(
+                    "INSERT INTO sensor_alert_state (key, mode, opened_at, last_sent_at, level, data) "
+                    "VALUES (?,?,?,?,?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET mode=excluded.mode, "
+                    "opened_at=excluded.opened_at, last_sent_at=excluded.last_sent_at, "
+                    "level=excluded.level, data=excluded.data",
+                    (key, mode, opened_at, last_sent_at, int(level),
+                     json.dumps(data or {}, ensure_ascii=False)),
+                )
+                con.commit()
+            finally:
+                con.close()
+
+    def add_sensor_alert_event(self, mode: str, severity: str, title: str,
+                               body: str, channels: str) -> int:
+        with self._lock:
+            con = self._connect()
+            try:
+                cur = con.execute(
+                    "INSERT INTO sensor_alert_events (mode, severity, title, body, channels, created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (mode, severity, title, body, channels, _now()),
+                )
+                con.commit()
+                return cur.lastrowid
+            finally:
+                con.close()
+
+    def get_sensor_alert_events(self, limit: int = 50) -> list[dict]:
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT * FROM sensor_alert_events ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            con.close()
+
     # ---- videos -----------------------------------------------------------
     def add_video(self, filename: str, storage_path: str, size_bytes: int,
                   user_id: Optional[int] = None,
@@ -695,6 +786,120 @@ class Store:
             sql += " GROUP BY tree_id ORDER BY last_seen DESC, tree_id ASC"
             rows = con.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
+        finally:
+            con.close()
+
+    # ---- tree registry (farm map) ---------------------------------------
+    def list_trees_registry(self, user_id: Optional[int] = None) -> list[dict]:
+        """Registered trees with their farm-map position and observation stats."""
+        con = self._connect()
+        try:
+            sql = (
+                "SELECT t.id, t.user_id, t.tree_id, t.name, t.variety, "
+                "t.row_num, t.col_num, t.note, t.created_at, t.updated_at, "
+                "COUNT(o.id) AS observation_count, "
+                "MIN(o.observed_at) AS first_seen, MAX(o.observed_at) AS last_seen "
+                "FROM trees t "
+                "LEFT JOIN observations o ON o.tree_id = t.tree_id "
+                "AND (o.user_id = t.user_id OR o.user_id IS NULL) "
+            )
+            params: list = []
+            if user_id is not None:
+                sql += "WHERE t.user_id = ? "
+                params.append(user_id)
+            sql += (
+                "GROUP BY t.id "
+                "ORDER BY t.row_num ASC, t.col_num ASC, t.tree_id ASC"
+            )
+            rows = con.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            con.close()
+
+    def create_tree(self, user_id: int, tree_id: str, name: Optional[str] = None,
+                    variety: Optional[str] = None, row_num: int = 1,
+                    col_num: int = 1, note: Optional[str] = None) -> dict:
+        now = _now()
+        con = self._connect()
+        try:
+            try:
+                cur = con.execute(
+                    "INSERT INTO trees (user_id, tree_id, name, variety, "
+                    "row_num, col_num, note, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (user_id, tree_id.strip(), name or None, variety or None,
+                     row_num, col_num, note or None, now, now),
+                )
+                con.commit()
+            except sqlite3.IntegrityError:
+                with self._lock:
+                    cur = con.execute(
+                        "SELECT id FROM trees WHERE user_id = ? AND tree_id = ?",
+                        (user_id, tree_id.strip()),
+                    )
+                    if cur.fetchone():
+                        raise ValueError("その樹木IDは既に登録されています")
+                    raise
+            row = con.execute(
+                "SELECT id, user_id, tree_id, name, variety, row_num, col_num, "
+                "note, created_at, updated_at FROM trees WHERE id = ?",
+                (cur.lastrowid,),
+            ).fetchone()
+            return dict(row)
+        finally:
+            con.close()
+
+    def update_tree(self, user_id: int, tree_id: str,
+                    name: Optional[str] = None, variety: Optional[str] = None,
+                    row_num: Optional[int] = None, col_num: Optional[int] = None,
+                    note: Optional[str] = None) -> Optional[dict]:
+        now = _now()
+        con = self._connect()
+        try:
+            cur = con.execute(
+                "UPDATE trees SET name = COALESCE(?, name), "
+                "variety = COALESCE(?, variety), "
+                "row_num = COALESCE(?, row_num), "
+                "col_num = COALESCE(?, col_num), "
+                "note = COALESCE(?, note), "
+                "updated_at = ? "
+                "WHERE user_id = ? AND tree_id = ?",
+                (name or None, variety or None, row_num, col_num,
+                 note or None, now, user_id, tree_id),
+            )
+            con.commit()
+            if cur.rowcount == 0:
+                return None
+            row = con.execute(
+                "SELECT id, user_id, tree_id, name, variety, row_num, col_num, "
+                "note, created_at, updated_at FROM trees "
+                "WHERE user_id = ? AND tree_id = ?",
+                (user_id, tree_id),
+            ).fetchone()
+            return dict(row)
+        finally:
+            con.close()
+
+    def delete_tree(self, user_id: int, tree_id: str) -> bool:
+        con = self._connect()
+        try:
+            cur = con.execute(
+                "DELETE FROM trees WHERE user_id = ? AND tree_id = ?",
+                (user_id, tree_id),
+            )
+            con.commit()
+            return cur.rowcount > 0
+        finally:
+            con.close()
+
+    def count_trees(self, user_id: Optional[int] = None) -> int:
+        con = self._connect()
+        try:
+            if user_id is not None:
+                return con.execute(
+                    "SELECT COUNT(*) c FROM trees WHERE user_id = ?",
+                    (user_id,)).fetchone()[0]
+            return con.execute("SELECT COUNT(*) c FROM trees").fetchone()[0]
         finally:
             con.close()
 

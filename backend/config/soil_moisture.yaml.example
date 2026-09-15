@@ -16,3 +16,27 @@ api_key: ""
 default_kit_id: "default"
 timeout: 10
 cache_ttl: 60
+
+# ===========================================================================
+# Sensor alerting (optional)
+# ===========================================================================
+# Detects sensor anomalies (stale data / abnormal moisture / API errors) and
+# notifies through the enabled channels.  Reminders escalate while the
+# anomaly persists; a recovery notification is sent when it clears.
+#
+# channels.inapp       deliver to the app's own notification feed (default true)
+# channels.webhook_url generic JSON webhook; if webhook_token is also set the
+#                      message is sent in LINE Notify format (Bearer token).
+alerts:
+  enabled: true             # master switch for the monitoring thread
+  check_interval_minutes: 10
+  stale_hours: 6            # consider the sensor offline after this silence
+  dry_percent: 15           # below this -> abnormal dryness alert
+  wet_percent: 85           # above this  -> abnormal wetness alert
+  notify_risk: true         # also alert on abnormal moisture values (dry/wet)
+  remind_hours: [6, 24, 72, 168]   # escalation reminders while an alert is open
+  recover_notify: true      # send a "recovered" notification afterwards
+  channels:
+    inapp: true
+    webhook_url: ""         # e.g. your Slack/Discord/Teams webhook URL
+    webhook_token: ""       # LINE Notify token (optional)

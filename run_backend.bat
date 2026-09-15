@@ -20,8 +20,9 @@ goto check
 
 :start
 echo [watchdog] Starting backend (uvicorn on %PORT%)...
+if not exist logs mkdir logs
 pushd backend
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port %PORT%
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port %PORT% >> ..\logs\backend-uvicorn.log 2>&1
 set EXIT=%errorlevel%
 popd
 echo [watchdog] Backend exited (code %EXIT%). Restarting in 3s...

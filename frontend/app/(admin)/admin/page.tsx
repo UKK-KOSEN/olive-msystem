@@ -12,6 +12,8 @@ import {
   Observation,
   Video,
   SiteSettings,
+  SensorAlertEvent,
+  SensorAlertsStatus,
   formatDuration,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -181,6 +183,14 @@ if (!stats) {
       <div className="grid gap-6 lg:grid-cols-2">
         <ThresholdsSection initial={stats.settings.health_thresholds} onSaved={(m) => flash(m.kind, m.text)} />
         <SoilConfigSection config={stats.soil.config} configured={stats.soil.configured} onTest={(m) => flash(m.kind, m.text)} />
+      </div>
+
+      <div className="mt-6">
+        <SensorAlertSection
+          alerts={stats.soil.alerts || {}}
+          soilConfig={stats.soil.config || {}}
+          onTest={(m) => flash(m.kind, m.text)}
+        />
       </div>
 
       <div className="mt-6">
@@ -420,7 +430,7 @@ function TextField({
   mask?: boolean;
 }) {
   return (
-    <div>
+<div>
       <label className="mb-1 block text-xs text-neutral-500">{label}</label>
       <input
         type={mask ? 'password' : 'text'}
@@ -430,6 +440,264 @@ function TextField({
         className="input px-2.5 py-1.5 text-sm"
       />
     </div>
+  );
+}
+
+const ALERT_META: Record<string, { label: string; cls: string; dot: string }> = {
+  ok: { label: '正常', cls: 'bg-health-good/10 text-health-good', dot: '#4c9a5a' },
+  stale: { label: 'データ更新停止', cls: 'bg-health-danger/10 text-health-danger', dot: '#c25a4a' },
+  api_error: { label: 'API接続エラー', cls: 'bg-health-danger/10 text-health-danger', dot: '#c25a4a' },
+  risk: { label: '水分値の異常', cls: 'bg-health-caution/10 text-health-caution', dot: '#c99a2e' },
+  unconfigured: { label: '監視対象外', cls: 'bg-neutral-100 text-neutral-500', dot: '#a0a0a0' },
+};
+
+const EVENT_SEV: Record<string, string> = {
+  open: 'bg-health-danger/10 text-health-danger',
+  remind: 'bg-health-caution/10 text-health-caution',
+  recovered: 'bg-health-good/10 text-health-good',
+  test: 'bg-neutral-100 text-neutral-500',
+};
+
+function fmtNum(v: number | null | undefined): string {
+  return v == null || Number.isNaN(v) ? '—' : String(v);
+}
+
+function SensorAlertSection({
+  alerts,
+  soilConfig,
+  onTest,
+}: {
+  alerts: Record<string, any>;
+  soilConfig: Record<string, any>;
+  onTest: (m: { kind: 'ok' | 'err'; text: string }) => void;
+}) {
+  const [status, setStatus] = useState<SensorAlertsStatus | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  const [enabled, setEnabled] = useState(true);
+  const [checkInterval, setCheckInterval] = useState('10');
+  const [staleHours, setStaleHours] = useState('6');
+  const [dryPercent, setDryPercent] = useState('15');
+  const [wetPercent, setWetPercent] = useState('85');
+  const [remind, setRemind] = useState('6, 24, 72, 168');
+  const [notifyRisk, setNotifyRisk] = useState(true);
+  const [recoverNotify, setRecoverNotify] = useState(true);
+  const [inapp, setInapp] = useState(true);
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookToken, setWebhookToken] = useState('');
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await api.sensorAlerts());
+    } catch {
+      setStatus(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const ch = alerts?.channels || {};
+    setEnabled(alerts?.enabled ?? true);
+    setCheckInterval(String(alerts?.check_interval_minutes ?? 10));
+    setStaleHours(String(alerts?.stale_hours ?? 6));
+    setDryPercent(String(alerts?.dry_percent ?? 15));
+    setWetPercent(String(alerts?.wet_percent ?? 85));
+    setRemind(String((alerts?.remind_hours || [6, 24, 72, 168]).join(', ')));
+    setNotifyRisk(alerts?.notify_risk ?? true);
+    setRecoverNotify(alerts?.recover_notify ?? true);
+    setInapp(ch?.inapp ?? true);
+    setWebhookUrl(ch?.webhook_url || '');
+    setWebhookToken(ch?.webhook_token || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alerts, refresh]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const num = (v: string) => (v.trim() ? parseFloat(v) : undefined);
+      const remindHours = remind
+        .split(',')
+        .map((s) => parseFloat(s.trim()))
+        .filter((n) => Number.isFinite(n));
+      const payload: Record<string, any> = {
+        ...(soilConfig || {}),
+        alerts: {
+          enabled,
+          check_interval_minutes: num(checkInterval),
+          stale_hours: num(staleHours),
+          dry_percent: num(dryPercent),
+          wet_percent: num(wetPercent),
+          notify_risk: notifyRisk,
+          recover_notify: recoverNotify,
+          remind_hours: remindHours,
+          channels: { inapp, webhook_url: webhookUrl.trim(), webhook_token: webhookToken.trim() },
+        },
+      };
+      await api.saveSoilConfig(payload);
+      onTest({ kind: 'ok', text: 'センサー監視・通知の設定を保存しました。' });
+      refresh();
+    } catch (e: any) {
+      onTest({ kind: 'err', text: e.message || '保存に失敗しました' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    try {
+      const r = await api.testSensorNotification();
+      const ok = r.results.filter((c: any) => c.ok);
+      const fail = r.results.filter((c: any) => !c.ok);
+      if (ok.length === 0) {
+        onTest({ kind: 'err', text: '有効な通知チャネルがありません。アプリ内通知またはWebhookを有効にしてください。' });
+      } else if (fail.length > 0) {
+        onTest({
+          kind: 'err',
+          text: `テスト送信: ${ok.map((c: any) => c.channel).join('、')} OK／${fail.map((c: any) => `${c.channel}（${c.detail || '失敗'}）`).join('、')}`,
+        });
+      } else {
+        onTest({ kind: 'ok', text: `テスト通知を送信しました（${ok.map((c: any) => c.channel).join('、')}）。` });
+      }
+      refresh();
+    } catch (e: any) {
+      onTest({ kind: 'err', text: e.message || 'テスト送信に失敗しました' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const ev = status?.evaluation;
+  const meta = ALERT_META[ev?.mode || 'unconfigured'] || ALERT_META.unconfigured;
+  const state = status?.state;
+  const openAlert = !!state && ['stale', 'api_error', 'risk'].includes(state.mode);
+  const openedAt = state?.opened_at ? new Date(state.opened_at) : null;
+  const elapsedH =
+    openedAt && !Number.isNaN(openedAt.getTime()) ? Math.max(0, (Date.now() - openedAt.getTime()) / 3600000) : null;
+  const age = ev?.age_hours != null ? Math.round(ev.age_hours) : null;
+  const bg = `${meta.dot}0d`;
+  const border = `${meta.dot}33`;
+
+  return (
+    <section className="card">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="label">土壌センサー監視・通知</h2>
+        <div className="flex items-center gap-2">
+          <span className={`badge ${meta.cls}`}>{meta.label}</span>
+          {status && !status.enabled && <span className="badge bg-neutral-100 text-neutral-500">監視無効</span>}
+        </div>
+      </div>
+      <p className="mb-3 text-xs text-neutral-400">
+        センサーの停止・水分値異常・API接続エラーを検知し、アプリ内通知とWebhookへ届けます。
+        異常は即時通知 → 段階リマインド → 復旧通知の順に送信されます。
+      </p>
+
+      {ev && (
+        <div className="mb-4 rounded-lg border p-3 text-sm" style={{ borderColor: border, background: bg }}>
+          <p className="font-medium" style={{ color: meta.dot }}>
+            {ev.title}
+          </p>
+          <p className="mt-1 whitespace-pre-line text-xs text-neutral-700">{ev.body}</p>
+          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-neutral-500">
+            {ev.kit_id && <span>Kit: {ev.kit_id}</span>}
+            {ev.measured_at && <span>最終更新: {fmtDateTime(ev.measured_at)}</span>}
+            {age != null && <span>データ経過: {age}時間</span>}
+            <span>センサー1 {fmtNum(ev.sensor1)}%</span>
+            <span>センサー2 {fmtNum(ev.sensor2)}%</span>
+            {ev.error && <span className="text-health-danger">エラー: {ev.error}</span>}
+          </div>
+          {openAlert && (
+            <div className="mt-2 text-[11px] text-health-danger">
+              検知から{elapsedH != null ? `${Math.round(elapsedH)}時間` : '—'}経過
+              {state.level > 0 ? `・リマインド送信済み ${state.level} 回` : ''}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mb-3 flex items-center gap-2">
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <label className="text-sm text-neutral-700">センサー監視を有効にする</label>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <TextField label="チェック間隔 (分)" value={checkInterval} onChange={setCheckInterval} placeholder="10" />
+        <TextField label="停止判定 (時間)" value={staleHours} onChange={setStaleHours} placeholder="6" />
+        <TextField label="乾燥閾値 (%)" value={dryPercent} onChange={setDryPercent} placeholder="15" />
+        <TextField label="過湿閾値 (%)" value={wetPercent} onChange={setWetPercent} placeholder="85" />
+      </div>
+      <div className="mt-2">
+        <TextField label="リマインド間隔 (時間・カンマ区切り)" value={remind} onChange={setRemind} placeholder="6, 24, 72, 168" />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1">
+        <label className="flex items-center gap-2 text-sm text-neutral-700">
+          <input type="checkbox" checked={notifyRisk} onChange={(e) => setNotifyRisk(e.target.checked)} />
+          水分値異常を通知
+        </label>
+        <label className="flex items-center gap-2 text-sm text-neutral-700">
+          <input type="checkbox" checked={recoverNotify} onChange={(e) => setRecoverNotify(e.target.checked)} />
+          復旧通知
+        </label>
+      </div>
+
+      <div className="mt-4 mb-2 border-t pt-3">
+        <p className="mb-2 text-xs font-medium text-neutral-500">通知チャネル</p>
+        <label className="mb-2 flex items-center gap-2 text-sm text-neutral-700">
+          <input type="checkbox" checked={inapp} onChange={(e) => setInapp(e.target.checked)} />
+          アプリ内通知（お知らせ）
+        </label>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <TextField label="Webhook URL（Slack/Discord/Teams等）" value={webhookUrl} onChange={setWebhookUrl} placeholder="https://hooks.example.com/…" />
+          <TextField label="LINE Notifyトークン（任意）" value={webhookToken} onChange={setWebhookToken} placeholder="設定済みならマスク表示" mask />
+        </div>
+        <p className="mt-1 text-[11px] text-neutral-400">
+          トークン未指定ならJSON Webhook、指定時はLINE Notify形式で送信します。
+        </p>
+      </div>
+
+      <div className="mt-3 flex gap-2">
+        <button onClick={test} disabled={testing} className="btn-secondary">
+          {testing ? '送信中…' : 'テスト通知を送信'}
+        </button>
+        <button onClick={save} disabled={saving} className="btn-primary">
+          {saving ? '保存中…' : '設定を保存'}
+        </button>
+      </div>
+
+      {status && status.events.length > 0 && (
+        <div className="mt-5">
+          <p className="label mb-2">送信履歴</p>
+          <div className="max-h-64 overflow-auto rounded-lg border">
+            <table className="w-full text-left text-xs">
+              <thead className="sticky top-0 bg-white">
+                <tr className="border-b text-neutral-500">
+                  <th className="px-3 py-2 font-medium">日時</th>
+                  <th className="px-3 py-2 font-medium">種別</th>
+                  <th className="px-3 py-2 font-medium">内容</th>
+                  <th className="px-3 py-2 font-medium">チャネル</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.events.map((e: SensorAlertEvent) => (
+                  <tr key={e.id} className="border-b last:border-0">
+                    <td className="whitespace-nowrap px-3 py-2 text-neutral-500">{fmtDateTime(e.created_at)}</td>
+                    <td className="px-3 py-2">
+                      <span className={`badge text-[10px] ${EVENT_SEV[e.severity] || EVENT_SEV.test}`}>{e.severity}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <p className="font-medium text-neutral-700">{e.title}</p>
+                      <p className="whitespace-pre-line text-[11px] text-neutral-400">{e.body}</p>
+                    </td>
+                    <td className="px-3 py-2 text-neutral-500">{e.channels || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
