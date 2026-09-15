@@ -903,6 +903,92 @@ def list_trees(user: dict = Depends(get_current_user)):
     return store.list_trees(user_id=_scope_id(user))
 
 
+@app.get("/api/farm-map")
+def farm_map(farmer_id: Optional[int] = Query(None),
+             user: dict = Depends(get_current_user)):
+    """Return tree nodes for the mock farm map with the latest per-tree health.
+
+    Reuses the existing ``tree_id`` management: every tree with at least one
+    observed record appears on the map.  Positions are deterministic
+    pseudo-random coordinates (stable across requests) so the layout behaves
+    like a fixed field map without persisting anything.
+    """
+    if user["role"] == "admin":
+        uid = farmer_id
+    else:
+        uid = user["id"]
+
+    farmer = None
+    if user["role"] == "admin" and uid is not None:
+        u = store.get_user(uid)
+        if u:
+            farmer = None if u["role"] != "farmer" else {
+                "id": u["id"], "username": u.get("username"),
+                "display_name": u.get("display_name"), "farm_name": u.get("farm_name"),
+            }
+
+    obs = store.list_observations(limit=2000, user_id=uid)
+
+    # Group observations by tree_id (only recorded trees).
+    grouped: dict[str, dict] = {}
+    for o in obs:
+        tid = o.get("tree_id")
+        if not tid:
+            continue
+        node = grouped.get(tid)
+        if node is None:
+            node = {
+                "tree_id": tid,
+                "observation_count": 0,
+                "first_seen": o.get("observed_at"),
+                "last_seen": o.get("observed_at"),
+                "latest": o,
+            }
+            grouped[tid] = node
+        node["observation_count"] += 1
+        seen = o.get("observed_at") or ""
+        if seen and seen > (node["last_seen"] or ""):
+            node["last_seen"] = seen
+            node["latest"] = o
+        if seen and seen < (node["first_seen"] or ""):
+            node["first_seen"] = seen
+
+    order = sorted(grouped.values(),
+                   key=lambda n: (n["last_seen"] or "", n["tree_id"]))
+
+    # Virtual field layout: fixed grid + stable jitter derived from the id.
+    COLS = 8
+    CELL_W, CELL_H = 118, 130
+    PAD_X, PAD_Y = 70, 70
+    rows = max(1, (len(order) + COLS - 1) // COLS)
+    tree_nodes = []
+    for i, node in enumerate(order):
+        col, row = i % COLS, i // COLS
+        h = sum(int(c) for c in node["tree_id"].encode("utf-8"))
+        jx = (h % 26) - 13
+        jy = ((h >> 4) % 26) - 13
+        latest = node["latest"]
+        st = health_state(latest.get("result") or {}) if latest else None
+        tree_nodes.append({
+            "tree_id": node["tree_id"],
+            "x": PAD_X + col * CELL_W + CELL_W // 2 + jx,
+            "y": PAD_Y + row * CELL_H + CELL_H // 2 + jy,
+            "state": st,
+            "observed_at": node["last_seen"],
+            "first_seen": node["first_seen"],
+            "observation_count": node["observation_count"],
+        })
+
+    return {
+        "farmer": farmer,
+        "map": {
+            "width": PAD_X * 2 + COLS * CELL_W,
+            "height": PAD_Y * 2 + rows * CELL_H,
+        },
+        "trees": tree_nodes,
+    }
+
+
 @app.delete("/api/observations")
 def delete_observations(ids: list[int] = Body(..., embed=True),
                         user: dict = Depends(get_current_user)):

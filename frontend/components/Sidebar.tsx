@@ -70,6 +70,17 @@ const nav: { href: string; label: string; icon: React.ReactNode; adminOnly?: boo
     ),
   },
   {
+    href: '/farm-map',
+    label: '農園マップ',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 4 3 7v11l6-3 6 3 6-3V4l-6 3-6-3Z" />
+        <path d="M9 4v11" />
+        <path d="M15 7v11" />
+      </svg>
+    ),
+  },
+  {
     href: '/notifications',
     label: 'お知らせ',
     icon: (

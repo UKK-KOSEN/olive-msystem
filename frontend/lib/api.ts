@@ -77,6 +77,30 @@ export interface TreeRecord {
   last_seen: string | null;
 }
 
+export type MapHealthLabel = 'happy' | 'good' | 'caution' | 'danger';
+
+export interface FarmMapTreeState {
+  label: MapHealthLabel;
+  score: number;
+  message?: string | null;
+}
+
+export interface FarmMapTree {
+  tree_id: string;
+  x: number;
+  y: number;
+  state: FarmMapTreeState | null;
+  observed_at?: string | null;
+  first_seen?: string | null;
+  observation_count: number;
+}
+
+export interface FarmMapData {
+  farmer?: { id: number; username?: string | null; display_name?: string | null; farm_name?: string | null } | null;
+  map: { width: number; height: number };
+  trees: FarmMapTree[];
+}
+
 export interface OliveStatus {
   states: Record<string, number>;
   total_observations: number;
@@ -516,6 +540,12 @@ export const api = {
   },
   async listTrees(): Promise<TreeRecord[]> {
     return handle(await get('/api/trees'));
+  },
+  async farmMap(farmerId?: number): Promise<FarmMapData> {
+    const q = new URLSearchParams();
+    if (farmerId != null) q.set('farmer_id', String(farmerId));
+    const qs = q.toString();
+    return handle(await get(`/api/farm-map${qs ? '?' + qs : ''}`));
   },
   async deleteObservations(ids: number[]): Promise<any> {
     return handle(await send('/api/observations', { method: 'DELETE', body: { ids } }));
