@@ -803,6 +803,95 @@ def admin_test_notifications(_: dict = Depends(require_admin)):
     }
 
 
+@app.post("/api/admin/soil-config/template-preview")
+def admin_template_preview(payload: dict = Body(...), _: dict = Depends(require_admin)):
+    """Render a message template against a sample alert and return the preview.
+
+    Request body::
+
+      {
+        "template": {"title": "...", "body": "..."},   # or a preset name str
+        "sample": "stale" | "risk" | "recovered" | "test",
+        "webhook_format": "json" | "discord" | "line_notify" | "text"
+      }
+
+    Response: rendered title/body plus the payload that would be sent
+    (fields, discord embed, etc.).
+    """
+    from .sensor_alerts import _render, _resolve_template, _template_context, _discord_payload
+    from .sensor_alerts import load_alerts_config
+
+    acfg = load_alerts_config()
+    sample = payload.get("sample") or "test"
+    fmt = (payload.get("webhook_format") or "json").lower()
+    tmpl = payload.get("template") or {}
+
+    # Synthetic evaluate()-style snapshots for the preview.
+    samples = {
+        "stale": {
+            "title": "土壌水分センサー: データ更新停止",
+            "body": "最終データ: 2026-09-11T06:37:38Z（約 6.5 時間前）（Kit: shodoshima-field-01）",
+            "severity": "critical", "mode": "stale",
+            "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T06:37:38Z",
+            "age_hours": 6.5, "sensor1": 4.3, "sensor2": 78.08,
+            "temperature": 27.6, "humidity": 56.3,
+        },
+        "risk": {
+            "title": "土壌水分センサー: 水分値の異常",
+            "body": "土壌水分に異常値が検出されました。",
+            "severity": "warning", "mode": "risk",
+            "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T07:00:00Z",
+            "age_hours": 0, "sensor1": 92.4, "sensor2": 45.1,
+            "temperature": 24.8, "humidity": 61.0,
+        },
+        "recovered": {
+            "title": "土壌水分センサー: 復旧しました",
+            "body": "土壌水分センサーは正常な状態に戻りました。",
+            "severity": "info", "mode": "ok",
+            "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T08:00:00Z",
+            "age_hours": 0, "sensor1": 52.3, "sensor2": 61.8,
+            "temperature": 25.1, "humidity": 57.2,
+        },
+        "test": {
+            "title": "土壌水分センサー: テスト通知",
+            "body": "これはテスト通知です。\n土壌水分センサーで異常が検出された際に、このチャネルへ通知が送信されます。",
+            "severity": "test", "mode": "test",
+            "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T09:00:00Z",
+            "age_hours": 0, "sensor1": 45.0, "sensor2": 62.5,
+            "temperature": 25.5, "humidity": 58.0,
+        },
+    }
+    ev = samples.get(sample, samples["test"])
+    if not isinstance(tmpl, dict):
+        tmpl = _resolve_template(acfg, {"template": tmpl} if tmpl else {})
+    tctx = _template_context(ev, acfg)
+    title = _render(tmpl.get("title"), tctx) or ev["title"]
+    body = _render(tmpl.get("body"), tctx) or ev["body"]
+    text = f"[{ev['severity']}] {title}\n{body}"
+
+    preview_payload: dict
+    if fmt == "discord":
+        preview_payload = _discord_payload(title, body, ev["severity"], text, tctx)
+    elif fmt == "line_notify":
+        preview_payload = {"form": {"message": text}}
+    elif fmt == "text":
+        preview_payload = {"plain": text}
+    else:  # json
+        preview_payload = {
+            "title": title, "body": body, "severity": ev["severity"],
+            "type": "sensor_alert", "service": "olive-msystem",
+            "text": text, "content": text,
+        }
+    return {
+        "sample": sample,
+        "severity": ev["severity"],
+        "title": title,
+        "body": body,
+        "text": text,
+        "payload": preview_payload,
+    }
+
+
 # --------------------------------------------------------------------------
 # Time-specified analysis
 # --------------------------------------------------------------------------
@@ -1494,7 +1583,13 @@ def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_a
             merged[key] = value
     if isinstance(existing.get("alerts"), dict) and isinstance(merged.get("alerts"), dict):
         for key, value in existing["alerts"].items():
-            if key not in merged["alerts"] or merged["alerts"][key] is None:
+            # Deep-preserve nested dict keys (templates.presets, escalation.*) so
+            # a partial payload never drops sub-keys that the editor did not send.
+            if isinstance(value, dict) and isinstance(merged["alerts"].get(key), dict):
+                for k2, v2 in value.items():
+                    if k2 not in merged["alerts"][key] or merged["alerts"][key][k2] is None:
+                        merged["alerts"][key][k2] = v2
+            elif key not in merged["alerts"] or merged["alerts"][key] is None:
                 merged["alerts"][key] = value
     if (isinstance(existing.get("alerts"), dict)
             and isinstance(existing["alerts"].get("channels"), dict)

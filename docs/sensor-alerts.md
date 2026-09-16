@@ -82,14 +82,16 @@ alerts:
 |-----------|------|
 | `name` | 管理画面で表示されるラベル |
 | `url` | 送信先の完全なURL |
-| `format` | `json`（汎用JSON・既定）、`line_notify`（LINE Notify形式）、`text`（プレーンテキスト） |
+| `format` | `json`（汎用JSON・既定）、`discord`（Embedカード）、`line_notify`（LINE Notify形式）、`text`（プレーンテキスト） |
 | `token` | LINE Notifyトークン（format=`line_notify` 時に使用） |
 | `headers` | カスタムHTTPヘッダー（任意） |
 | `timeout` | タイムアウト秒数（既定10秒） |
 
 **フォーマットの使い分け:**
 
-- **`json`**: `{title, body, severity, type, service}` をJSONでPOST。Slack/Discord/Teams/generic。
+- **`json`**: `{title, body, severity, type, service, text, content}` をJSONでPOST。Slack/Discord/Teams/generic。
+- **`discord`**: Discord のリッチ埋め込みカード（重要度色＋実測値フィールド）。
+  `json` でも `discord.com/api/webhooks/` 宛てなら自動でEmbed化。
 - **`line_notify`**: `Authorization: Bearer <token>` + `message=` のフォーム形式。LINE Notify API。
 - **`text`**: `text/plain` でメッセージ本文のみ送信。ntfy 等。
 
@@ -169,8 +171,19 @@ LINE の公式 Messaging API を利用して、友だちのLINEユーザーに�
 
 ## DBテーブル
 
-- `sensor_alert_state`: `key`(PK) / `mode` / `opened_at` / `last_sent_at` / `level`(送信済みリマインド数) / `data`
-- `sensor_alert_events`: `id` / `mode` / `severity`(open/remind/recovered/test) / `title` / `body` / `channels` / `created_at`
+- `sensor_alert_state`: `key`(PK) / `mode` / `opened_at` / `last_sent_at` / `level`(送信済みリマインド数) / `data`（JSON。`escalated: true` で昇格済み）
+- `sensor_alert_events`: `id` / `mode` / `severity`(open/remind/escalate/recovered/test) / `title` / `body` / `channels` / `created_at`
+
+## テンプレートと自動昇格
+
+- **テンプレート機能**: `alerts.templates.global` が全体のフォールバック。
+  各Webhookの `template` フィールドにプリセット名（`default`/`concise`/`detailed`）
+  または `{title, body}` 辞書を指定して上書きできます。
+  `{sensor1} {sensor2} {temperature} {humidity} {kit_id} {measured_at} {age_hours} {bar1} {bar2}` 等の
+  変数と `:.1f` 形式の書式指定が使えます（詳細は `docs/webhooks.md` の第6章）。
+- **重要度の自動昇格**: `alerts.escalation.{stale|risk}` に時間を設定すると、
+  その時間以上続く警告時アラートを一度だけ Critical として再通知します
+  （イベント `escalate`、状態 `data.escalated=true`）。
 
 ## よくある質問
 

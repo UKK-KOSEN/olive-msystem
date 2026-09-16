@@ -28,15 +28,24 @@ cache_ttl: 60
 # channels.webhooks    list of webhook targets.  Each entry:
 #   name       display label (used in the send history)
 #   url        full webhook URL
-#   format     json (default) | line_notify | text
+#   format     json (default) | discord | line_notify | text
+#              (json is auto-upgraded to a Discord embed card when the URL is a
+#              discord.com/api/webhooks/ endpoint)
 #   token      optional token; for format=line_notify this is the LINE Notify
 #              access token (sent as `Authorization: Bearer <token>`)
 #   headers    optional extra headers (map)
 #   timeout    request timeout in seconds (default 10)
+#   template   optional message template: a preset name (default | concise |
+#              detailed) or an inline {title, body} dict with {placeholder}s
+#              (falls back to alerts.templates.global, then built-in).
 #   example (json, generic):
 #     - name: Slack
 #       url: https://hooks.slack.com/services/XXXX/YYYY/ZZZZ
 #       format: json
+#   example (Discord embed card):
+#     - name: Discord
+#       url: https://discord.com/api/webhooks/XXXX/YYYY
+#       format: discord
 #   example (LINE Notify):
 #     - name: LINE Notify
 #       url: https://notify-api.line.me/api/notify
@@ -46,6 +55,18 @@ cache_ttl: 60
 #     - name: ntfy
 #       url: https://ntfy.sh/my-topic
 #       format: text
+# alerts.templates         message templates:
+#   global:                fallback template used when a webhook has none.
+#     title: "{title}"
+#     body: "..."
+#   placeholders: {title} {body} {severity} {mode} {kit_id} {measured_at}
+#                 {age_hours} {sensor1} {sensor2} {temperature} {humidity}
+#                 {bar1} {bar2} {dry_percent} {wet_percent} {stale_hours}
+#                 (+ python format specs like {temperature:.1f})
+# alerts.escalation        auto-escalation to critical (hours) per mode:
+#   stale: 24              after 24h of a stale alert send one critical notice
+#   risk: 12               after 12h of a risk alert send one critical notice
+#                          (0 disables escalation for that mode)
 # channels.line_bot    LINE BOT (Messaging API) push notification:
 #   enabled                  set true to enable
 #   channel_access_token     ISSUE page -> Messaging API -> Channel access token

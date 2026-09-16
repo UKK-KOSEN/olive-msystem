@@ -246,6 +246,15 @@ export interface NotificationTestResult {
   enabled: boolean;
 }
 
+export interface TemplatePreviewResult {
+  sample: string;
+  severity: string;
+  title: string;
+  body: string;
+  text: string;
+  payload: Record<string, any>;
+}
+
 export interface HealthThresholds {
   happy: number;
   good: number;
@@ -743,6 +752,13 @@ export const api = {
   },
   async testSensorNotification(): Promise<NotificationTestResult> {
     return handle(await send('/api/admin/soil-config/test-notification', { method: 'POST' }));
+  },
+  async previewTemplate(payload: {
+    template: Record<string, string> | string;
+    sample?: string;
+    webhook_format?: string;
+  }): Promise<TemplatePreviewResult> {
+    return handle(await send('/api/admin/soil-config/template-preview', { method: 'POST', body: payload }));
   },
   // ---- admin ----
   async adminStats(): Promise<AdminStats> {

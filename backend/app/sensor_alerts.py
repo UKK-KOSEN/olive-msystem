@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -44,6 +45,28 @@ logger = logging.getLogger("olive-msystem")
 
 ALERT_MODES = {"stale", "api_error", "risk"}
 
+# User-Agent for outbound webhook / LINE requests.  Some providers (Discord
+# fronts its API with Cloudflare) reject urllib's default ``Python-urllib/..``
+# UA with HTTP 403 (error 1010), so an explicit UA is mandatory.
+WEBHOOK_USER_AGENT = "olive-msystem-webhook/1.0"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow HTTP redirects on webhook POSTs.
+
+    urllib turns a 301/302 POST into a method-dropping GET when following the
+    redirect, so a POST to a wrong URL (e.g. a Discord *channel* link instead
+    of an ``/api/webhooks/`` endpoint) could report success while the message
+    never arrived.  Raising on any redirect surfaces those misconfigurations
+    instead of silently "succeeding".
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, f"redirect to {newurl}", headers, None)
+
+
+_WEBHOOK_OPENER = urllib.request.build_opener(_NoRedirect)
+
 DEFAULT_ALERTS: dict = {
     "enabled": True,
     "check_interval_minutes": 10,
@@ -53,10 +76,48 @@ DEFAULT_ALERTS: dict = {
     "notify_risk": True,
     "remind_hours": [6, 24, 72, 168],
     "recover_notify": True,
+    # Auto-escalation: after this many hours in a warning-level mode the alert
+    # is re-sent as critical exactly once.  key = alert mode, value = hours.
+    "escalation": {
+        "stale": 24,
+        "risk": 12,
+    },
+    # Message templates.  ``global`` is the fallback for webhooks without an
+    # explicit one; ``presets`` are ready-made templates selectable per webhook
+    # (``template: <preset name>``).  Every value supports ``{placeholder}``
+    # variables and Python-style format specs (e.g. ``{temperature:.1f}``).
+    "templates": {
+        "global": {
+            "title": "{title}",
+            "body": "{body}",
+        },
+        "presets": {
+            "default": {
+                "title": "{title}",
+                "body": "{body}",
+            },
+            "concise": {
+                "title": "{title}",
+                "body": "{body}\n▸ {bar1} / {bar2}",
+            },
+            "detailed": {
+                "title": "{title}",
+                "body": (
+                    "{body}"
+                    "\n────────────────────"
+                    "\nセンサー1: {bar1}"
+                    "\nセンサー2: {bar2}"
+                    "\n気温: {temperature:.1f}℃ / 湿度: {humidity:.1f}%"
+                    "\nKit: {kit_id} | 測定: {measured_at}"
+                ),
+            },
+        },
+    },
     "channels": {
         "inapp": True,
         # Multiple declarative webhooks.
-        # each entry: {name, url, format: json|line_notify|text, token, headers, timeout}
+        # each entry: {name, url, format: json|discord|line_notify|text,
+        #              token, headers, timeout, template}
         "webhooks": [],
         # LINE BOT (Messaging API).  `to` is the LINE user id that receives pushes.
         "line_bot": {
@@ -262,8 +323,9 @@ def evaluate() -> dict:
             "sensor_online": False,
             "title": "土壌水分センサー: データ更新停止",
             "body": (
-                f"最終更新は {measured}（約 {age_hours:.1f} 時間前）です。（Kit: {kit_id}）\n"
-                "センサーの電源・通信・設置状態を物理的に確認してください。"
+                f"最終データ: {measured}（約 {age_hours:.1f} 時間前）（Kit: {kit_id}）\n"
+                f"停止判定: しきい値 {stale_hours:.0f} 時間を超過しています。\n"
+                "センサーの電源・通信・設置状態を現場確認してください。"
             ),
             "severity": "critical",
             "error": None,
@@ -290,6 +352,7 @@ def evaluate() -> dict:
             "title": "土壌水分センサー: 水分値の異常",
             "body": (
                 f"土壌水分に異常値が検出されました。\n{msg}\n"
+                f"しきい値: 乾燥 {dry:.0f}%未満 / 過湿 {wet:.0f}%超\n"
                 f"（Kit: {kit_id}、測定 {measured}）"
             ),
             "severity": "warning",
@@ -312,6 +375,84 @@ def evaluate() -> dict:
 # ---------------------------------------------------------------------------
 # Channel senders
 # ---------------------------------------------------------------------------
+def _bar(value, dry_percent: float = 15, wet_percent: float = 85) -> str:
+    """Visual 10-block moisture bar with a Japanese status label.
+
+    ``4.3  -> "4.3% ▓░░░░░░░░░ 乾燥"`` / ``78.1 -> "78.1% ▓▓▓▓▓▓▓░░░ 正常"``
+    """
+    if value is None:
+        return "—"
+    try:
+        pct = max(0.0, min(100.0, float(value)))
+    except (TypeError, ValueError):
+        return str(value)
+    n = max(1, round(pct / 10.0)) if pct > 0 else 0
+    label = "乾燥" if pct < dry_percent else ("過湿" if pct > wet_percent else "正常")
+    return f"{pct:.1f}% {'▓' * n}{'░' * (10 - n)} {label}"
+
+
+def _render(text: Optional[str], ctx: dict) -> str:
+    """Render ``{placeholder}`` (with optional ``:.1f``-style specs) safely.
+
+    Unknown placeholders and format-spec errors degrade to an empty string
+    instead of raising.
+    """
+    if not text:
+        return ""
+    text = str(text)
+
+    def repl(match: "re.Match") -> str:
+        name = match.group(1)
+        if name not in ctx or ctx[name] is None:
+            return ""
+        spec = (match.group(2) or "").lstrip(":")
+        try:
+            return format(ctx[name], spec) if spec else str(ctx[name])
+        except (ValueError, TypeError):
+            return ""
+
+    return re.sub(r"\{([A-Za-z0-9_]+)(:[^}]*)?\}", repl, text)
+
+
+def _template_context(ev: dict, acfg: dict, dry: float = 0, wet: float = 0) -> dict:
+    """Flatten an evaluate() snapshot + config thresholds for template use."""
+    if not dry:
+        dry = float(acfg.get("dry_percent", 15))
+    if not wet:
+        wet = float(acfg.get("wet_percent", 85))
+    ctx = dict(ev or {})
+    ctx["bar1"] = _bar(ctx.get("sensor1"), dry, wet)
+    ctx["bar2"] = _bar(ctx.get("sensor2"), dry, wet)
+    ctx["dry_percent"] = dry
+    ctx["wet_percent"] = wet
+    ctx["stale_hours"] = acfg.get("stale_hours", 6)
+    return ctx
+
+
+_PRESET_KEYS = ("title", "body")
+
+
+def _resolve_template(acfg: dict, entry: dict) -> dict:
+    """Resolve the template for a webhook entry.
+
+    Priority: entry.template (dict | preset name) -> templates.global ->
+    built-in ``{title}``/``{body}`` passthrough.
+    """
+    templates = (acfg.get("templates") or {}) if isinstance(acfg, dict) else {}
+    presets = templates.get("presets") or {}
+    t = (entry or {}).get("template")
+    if isinstance(t, dict):
+        return {k: t.get(k) or "" for k in _PRESET_KEYS}
+    if isinstance(t, str):
+        preset = presets.get(t)
+        if isinstance(preset, dict):
+            return {k: preset.get(k) or "" for k in _PRESET_KEYS}
+    g = templates.get("global")
+    if isinstance(g, dict):
+        return {k: g.get(k) or "" for k in _PRESET_KEYS}
+    return {"title": "{title}", "body": "{body}"}
+
+
 def _build_webhook_entries(acfg: dict) -> list[dict]:
     """Resolve configured webhooks (declarative list, plus legacy fallback)."""
     ch = acfg.get("channels") or {}
@@ -329,11 +470,73 @@ def _build_webhook_entries(acfg: dict) -> list[dict]:
     return entries
 
 
-def _send_one_webhook(entry: dict, title: str, body: str, severity: str):
+# Discord embed colour (decimal) per severity.
+_DISCORD_COLORS = {
+    "critical": 0xE74C3C,  # red
+    "warning": 0xF1C40F,   # yellow
+    "info": 0x2ECC71,      # green
+    "test": 0x7289DA,      # blurple
+}
+
+# Human-friendly labels used in the embed footer.
+_SEVERITY_LABELS = {
+    "critical": "重大",
+    "warning": "警告",
+    "info": "通知",
+    "test": "テスト",
+}
+
+
+def _discord_payload(title: str, body: str, severity: str, text: str, ctx: Optional[dict]) -> dict:
+    """Rich Discord message with an embed card.
+
+    ``ctx`` is the evaluate() snapshot (sensor1/sensor2/temperature/humidity/
+    measured_at/age_hours/kit_id) so the card shows the current readings.
+    """
+    sev = _SEVERITY_LABELS.get(severity, severity)
+    embed: dict = {
+        "title": title,
+        "description": body,
+        "color": _DISCORD_COLORS.get(severity, 0x5865F2),
+        "timestamp": _now_iso(),
+        "footer": {"text": f"olive-msystem · {sev}"},
+    }
+    fields = []
+    ctx = ctx or {}
+    if ctx.get("measured_at"):
+        fields.append({"name": "最終データ時刻", "value": str(ctx["measured_at"]), "inline": True})
+    for label, key in (("センサー1", "sensor1"), ("センサー2", "sensor2")):
+        val = ctx.get(key)
+        if val is not None:
+            if isinstance(val, (int, float)):
+                value = _bar(val, ctx.get("dry_percent", 15), ctx.get("wet_percent", 85))
+            else:
+                value = str(val)
+            fields.append({"name": label, "value": value, "inline": True})
+    for label, key, unit in (("気温", "temperature", "℃"), ("湿度", "humidity", "%")):
+        val = ctx.get(key)
+        if val is not None:
+            value = f"{val:.1f}{unit}" if isinstance(val, (int, float)) else str(val)
+            fields.append({"name": label, "value": value, "inline": True})
+    if isinstance(ctx.get("age_hours"), (int, float)):
+        fields.append({"name": "経過時間", "value": f"約 {ctx['age_hours']:.1f} 時間前", "inline": True})
+    if ctx.get("kit_id"):
+        fields.append({"name": "Kit", "value": str(ctx["kit_id"]), "inline": True})
+    if fields:
+        embed["fields"] = fields
+    return {"content": text, "embeds": [embed]}
+
+
+def _send_one_webhook(entry: dict, title: str, body: str, severity: str, tctx: Optional[dict] = None):
     """POST to a single webhook entry.
 
+    ``title`` / ``body`` are already template-rendered.  ``tctx`` is the
+    enriched template context used for Discord embed fields.
+
     ``format`` selects the payload style:
-      - ``json``        JSON object (default, for Slack/Discord/Teams/generic)
+      - ``json``        JSON object (generic: Slack/Discord/Teams etc.)
+      - ``discord``     Discord rich embed card (also auto-selected when a
+                        json entry points at a discord.com/api/webhooks URL)
       - ``line_notify`` LINE Notify form format (Bearer token optional)
       - ``text``        raw text/plain message
     """
@@ -341,10 +544,13 @@ def _send_one_webhook(entry: dict, title: str, body: str, severity: str):
     if not url:
         return "skipped", None
     fmt = (entry.get("format") or "json").lower()
+    if fmt == "json" and "discord.com/api/webhooks/" in url:
+        fmt = "discord"
     timeout = float(entry.get("timeout") or 10)
     text = f"[{severity}] {title}\n{body}"
     token = (entry.get("token") or "").strip()
     headers = {str(k): str(v) for k, v in (entry.get("headers") or {}).items()}
+    headers.setdefault("User-Agent", WEBHOOK_USER_AGENT)
     try:
         if fmt == "line_notify":
             headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
@@ -354,22 +560,36 @@ def _send_one_webhook(entry: dict, title: str, body: str, severity: str):
         elif fmt == "text":
             headers.setdefault("Content-Type", "text/plain; charset=utf-8")
             data = text.encode("utf-8")
+        elif fmt == "discord":
+            headers.setdefault("Content-Type", "application/json")
+            payload = _discord_payload(title, body, severity, text, tctx)
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         else:  # json
             headers.setdefault("Content-Type", "application/json")
+            # Generic fields for custom APIs plus the platform fields that
+            # Slack (text) and Discord (content) actually render.  Without
+            # ``content`` Discord rejects the message with HTTP 400
+            # ("Cannot send an empty message", code 50006).
             payload = {
                 "title": title,
                 "body": body,
                 "severity": severity,
                 "type": "sensor_alert",
                 "service": "olive-msystem",
+                "text": text,
+                "content": text,
             }
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=timeout):
+        with _WEBHOOK_OPENER.open(req, timeout=timeout):
             pass
         return "ok", None
     except urllib.error.HTTPError as exc:
-        return "error", f"HTTP {exc.code}"
+        try:
+            detail = exc.read().decode("utf-8", "replace").strip()[:200]
+        except Exception:
+            detail = ""
+        return "error", f"HTTP {exc.code}" + (f": {detail}" if detail else "")
     except Exception as exc:
         return "error", str(exc)
 
@@ -394,10 +614,11 @@ def _send_line_bot(acfg: dict, title: str, body: str, severity: str):
             headers={
                 "Authorization": "Bearer " + token,
                 "Content-Type": "application/json",
+                "User-Agent": WEBHOOK_USER_AGENT,
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _WEBHOOK_OPENER.open(req, timeout=10) as resp:
             if resp.status != 200:
                 return "error", f"LINE API HTTP {resp.status}"
         return "ok", None
@@ -419,15 +640,25 @@ def _send_inapp(store, title: str, body: str, severity: str):
         return "error", str(exc)
 
 
-def send_channels(store, acfg: dict, title: str, body: str, severity: str) -> list[dict]:
-    """Deliver through every enabled channel; return per-channel results."""
+def send_channels(store, acfg: dict, title: str, body: str, severity: str,
+                  ctx: Optional[dict] = None) -> list[dict]:
+    """Deliver through every enabled channel; return per-channel results.
+
+    ``ctx`` is an optional evaluate() snapshot (Discord embed fields, and the
+    template context).  Each webhook's own template (or the global fallback)
+    is resolved and rendered before sending.
+    """
     ch = acfg.get("channels") or {}
+    tctx = _template_context(ctx if ctx is not None else {}, acfg)
     results = []
     if ch.get("inapp", True):
         ok, err = _send_inapp(store, title, body, severity)
         results.append({"channel": "inapp", "ok": ok == "ok", "detail": err})
     for entry in _build_webhook_entries(acfg):
-        ok, err = _send_one_webhook(entry, title, body, severity)
+        tpl = _resolve_template(acfg, entry)
+        rt = _render(tpl["title"], tctx) or title
+        rb = _render(tpl["body"], tctx) or body
+        ok, err = _send_one_webhook(entry, rt, rb, severity, tctx)
         results.append({
             "channel": "webhook",
             "name": (entry.get("name") or "webhook").strip() or "webhook",
@@ -447,6 +678,18 @@ def _used_channels(results: list[dict]) -> str:
             continue
         labels.append(c.get("name") or c["channel"])
     return ",".join(dict.fromkeys(labels))
+
+
+def _state_escalated(state: Optional[dict]) -> bool:
+    """True when the persisted state already marked the alert as escalated."""
+    raw = (state or {}).get("data")
+    if not raw:
+        return False
+    try:
+        d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except Exception:
+        d = {}
+    return bool(d.get("escalated"))
 
 
 def _state_summary(ev: dict) -> dict:
@@ -475,16 +718,37 @@ def run_monitor(store) -> dict:
         data = _state_summary(ev)
         if prev not in ALERT_MODES:
             # First detection of an anomaly (or the type changed).
-            results = send_channels(store, acfg, ev["title"], ev["body"], ev["severity"])
+            results = send_channels(store, acfg, ev["title"], ev["body"], ev["severity"], ev)
             used = _used_channels(results)
             store.add_sensor_alert_event(ev["mode"], "open", ev["title"], ev["body"], used)
             store.set_sensor_alert_state("default", ev["mode"], now, now, 0, data)
             logger.warning("sensor alert opened: mode=%s channels=%s", ev["mode"], used or "none")
             return {"action": "open", "mode": ev["mode"], "channels": results}
         if ev["mode"] == prev:
-            # Same anomaly persists: fire the next scheduled reminder if due.
+            # Same anomaly persists: auto-escalation first, then scheduled reminders.
             elapsed_h = _elapsed_hours(state.get("opened_at"))
             level = int(state.get("level") or 0)
+            # Auto-escalation: a warning-level mode that persisted beyond the
+            # configured threshold is re-announced once as critical.
+            esc = acfg.get("escalation") or {}
+            esc_h = esc.get(ev["mode"])
+            if (esc_h and not _state_escalated(state)
+                    and elapsed_h is not None and elapsed_h >= float(esc_h)):
+                esc_title = f"【重要度昇格】{ev['title']}"
+                esc_body = (
+                    f"{ev['body']}\n"
+                    f"検知から約 {elapsed_h:.0f} 時間が経過し、重要度を Critical に引き上げました。\n"
+                    "早急な現場確認・対処をお願いします。"
+                )
+                results = send_channels(store, acfg, esc_title, esc_body, "critical", ev)
+                used = _used_channels(results)
+                store.add_sensor_alert_event(ev["mode"], "escalate", esc_title, esc_body, used)
+                store.set_sensor_alert_state(
+                    "default", ev["mode"], state.get("opened_at"), now, level, {**data, "escalated": True})
+                logger.warning("sensor alert escalated: mode=%s hours=%.1f channels=%s",
+                               ev["mode"], elapsed_h, used or "none")
+                return {"action": "escalated", "mode": ev["mode"], "channels": results}
+            # Otherwise fire the next scheduled reminder if due.
             schedule = [float(x) for x in (acfg.get("remind_hours") or [])]
             if elapsed_h is not None and 0 <= level < len(schedule) and elapsed_h >= schedule[level]:
                 n = level + 1
@@ -493,7 +757,7 @@ def run_monitor(store) -> dict:
                     f"【リマインド {n} 回目】検知から約 {elapsed_h:.0f} 時間が経過しています。\n"
                     f"{ev['body']}"
                 )
-                results = send_channels(store, acfg, title, body, ev["severity"])
+                results = send_channels(store, acfg, title, body, ev["severity"], ev)
                 used = _used_channels(results)
                 store.add_sensor_alert_event(ev["mode"], "remind", title, body, used)
                 store.set_sensor_alert_state("default", ev["mode"], state.get("opened_at"), now, n, data)
@@ -501,7 +765,7 @@ def run_monitor(store) -> dict:
                 return {"action": "remind", "mode": ev["mode"], "reminder": n, "channels": results}
             return {"action": "hold", "mode": ev["mode"]}
         # Different anomaly kind while in an alert state -> re-open.
-        results = send_channels(store, acfg, ev["title"], ev["body"], ev["severity"])
+        results = send_channels(store, acfg, ev["title"], ev["body"], ev["severity"], ev)
         used = _used_channels(results)
         store.add_sensor_alert_event(ev["mode"], "open", ev["title"], ev["body"], used)
         store.set_sensor_alert_state("default", ev["mode"], now, now, 0, data)
@@ -515,9 +779,10 @@ def run_monitor(store) -> dict:
             body = (
                 f"土壌水分センサーは正常な状態に戻りました。\n"
                 f"最新データ: センサー1 {_fmt(ev.get('sensor1'))} / "
-                f"センサー2 {_fmt(ev.get('sensor2'))}（測定 {ev.get('measured_at')}）"
+                f"センサー2 {_fmt(ev.get('sensor2'))}（測定 {ev.get('measured_at')}）\n"
+                "今後も通常の監視を継続します。"
             )
-            results = send_channels(store, acfg, title, body, "info")
+            results = send_channels(store, acfg, title, body, "info", ev)
             used = _used_channels(results)
             store.add_sensor_alert_event("ok", "recovered", title, body, used)
             store.set_sensor_alert_state("default", ev["mode"], None, None, 0, _state_summary(ev))
@@ -548,6 +813,7 @@ def test_channels(store) -> list[dict]:
     body = (
         "これはテスト通知です。\n"
         "土壌水分センサーで異常が検出された際に、このチャネルへ通知が送信されます。\n"
+        "Webhook の形式や表示（Discord Embed 等）のプレビューも兼ねています。\n"
         f"送信日時: {_now_iso()}"
     )
     results = send_channels(store, acfg, title, body, "test")

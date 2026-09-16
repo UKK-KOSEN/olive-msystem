@@ -14,6 +14,7 @@ import {
   SiteSettings,
   SensorAlertEvent,
   SensorAlertsStatus,
+  TemplatePreviewResult,
   formatDuration,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -484,11 +485,18 @@ function SensorAlertSection({
   const [notifyRisk, setNotifyRisk] = useState(true);
   const [recoverNotify, setRecoverNotify] = useState(true);
   const [inapp, setInapp] = useState(true);
-  const [webhooks, setWebhooks] = useState<{ name: string; url: string; format: string; token: string }[]>([]);
+  const [webhooks, setWebhooks] = useState<{ name: string; url: string; format: string; token: string; template: string }[]>([]);
   const [lineEnabled, setLineEnabled] = useState(false);
   const [lineToken, setLineToken] = useState('');
   const [lineTo, setLineTo] = useState('');
   const [lineEndpoint, setLineEndpoint] = useState('');
+  const [escStale, setEscStale] = useState('24');
+  const [escRisk, setEscRisk] = useState('12');
+  const [tplGlobalTitle, setTplGlobalTitle] = useState('');
+  const [tplGlobalBody, setTplGlobalBody] = useState('');
+  const [previewSample, setPreviewSample] = useState('stale');
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<TemplatePreviewResult | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -517,6 +525,7 @@ function SensorAlertSection({
         url: w?.url || '',
         format: w?.format || 'json',
         token: w?.token || '',
+        template: typeof w?.template === 'string' ? w.template : '',
       })),
     );
     const lb = ch?.line_bot || {};
@@ -524,6 +533,12 @@ function SensorAlertSection({
     setLineToken(lb?.channel_access_token || '');
     setLineTo(lb?.to || '');
     setLineEndpoint(lb?.endpoint || '');
+    const esc = alerts?.escalation || {};
+    setEscStale(String(esc?.stale ?? 24));
+    setEscRisk(String(esc?.risk ?? 12));
+    const tplGlobal = alerts?.templates?.global || {};
+    setTplGlobalTitle(tplGlobal?.title ?? '');
+    setTplGlobalBody(tplGlobal?.body ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alerts, refresh]);
 
@@ -546,14 +561,25 @@ function SensorAlertSection({
           notify_risk: notifyRisk,
           recover_notify: recoverNotify,
           remind_hours: remindHours,
+          escalation: {
+            ...(escStale.trim() ? { stale: parseFloat(escStale) } : {}),
+            ...(escRisk.trim() ? { risk: parseFloat(escRisk) } : {}),
+          },
+          templates: {
+            global: {
+              title: tplGlobalTitle,
+              body: tplGlobalBody,
+            },
+          },
           channels: {
             inapp,
             webhooks: webhooks
               .map((w) => ({
                 name: w.name.trim() || 'webhook',
                 url: w.url.trim(),
-                format: (['json', 'line_notify', 'text'].includes(w.format) ? w.format : 'json'),
+                format: (['json', 'discord', 'line_notify', 'text'].includes(w.format) ? w.format : 'json'),
                 token: w.token.trim(),
+                ...(typeof w.template === 'string' && w.template.trim() ? { template: w.template.trim() } : {}),
               }))
               .filter((w) => w.url),
             line_bot: {
@@ -599,6 +625,21 @@ function SensorAlertSection({
     }
   };
 
+  const previewTemplate = async () => {
+    setPreviewing(true);
+    try {
+      const tpl = {
+        title: tplGlobalTitle.trim() || '{title}',
+        body: tplGlobalBody.trim() || '{body}',
+      };
+      setPreview(await api.previewTemplate({ template: tpl, sample: previewSample, webhook_format: 'discord' }));
+    } catch (e: any) {
+      onTest({ kind: 'err', text: e.message || 'プレビューに失敗しました' });
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
   const ev = status?.evaluation;
   const meta = ALERT_META[ev?.mode || 'unconfigured'] || ALERT_META.unconfigured;
   const state = status?.state;
@@ -610,8 +651,36 @@ function SensorAlertSection({
   const bg = `${meta.dot}0d`;
   const border = `${meta.dot}33`;
 
-  const setWebhookField = (i: number, patch: Partial<{ name: string; url: string; format: string; token: string }>) =>
+  const setWebhookField = (i: number, patch: Partial<{ name: string; url: string; format: string; token: string; template: string }>) =>
     setWebhooks((prev) => prev.map((w, j) => (j === i ? { ...w, ...patch } : w)));
+
+  const moveWebhook = (i: number, dir: -1 | 1) =>
+    setWebhooks((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+
+  const webhookHint = (f: string, url: string): string => {
+    if (/discord(app)?\.com\/channels\//.test(url)) {
+      return '⚠ これはチャンネルURLです。Webhook URL（discord.com/api/webhooks/...）を設定してください。';
+    }
+    const isDiscord = url.includes('discord.com/api/webhooks/');
+    switch (f) {
+      case 'discord':
+        return '重要度色＋実測値の Embed カードで表示されます。';
+      case 'line_notify':
+        return 'LINE Notify 形式（Bearer トークン + message=）で送信します。';
+      case 'text':
+        return '本文をそのまま送信します（ntfy など）。';
+      default:
+        return isDiscord
+          ? 'Discord宛てのため自動で Embed（カード）形式にアップグレードされます。'
+          : '汎用JSON（Slack / Teams / 独自API）。Slack用の text・Discord用の content を含みます。';
+    }
+  };
 
   return (
     <section className="card">
@@ -664,6 +733,13 @@ function SensorAlertSection({
       <div className="mt-2">
         <TextField label="リマインド間隔 (時間・カンマ区切り)" value={remind} onChange={setRemind} placeholder="6, 24, 72, 168" />
       </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <TextField label="自動昇格: 停止 (時間)" value={escStale} onChange={setEscStale} placeholder="24" />
+        <TextField label="自動昇格: 異常 (時間)" value={escRisk} onChange={setEscRisk} placeholder="12" />
+      </div>
+      <p className="mt-1 text-[11px] text-neutral-400">
+        この時間を超えて続く異常は、検知後一度だけ重要度 Critical に昇格して再通知します（0 で無効）。
+      </p>
       <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1">
         <label className="flex items-center gap-2 text-sm text-neutral-700">
           <input type="checkbox" checked={notifyRisk} onChange={(e) => setNotifyRisk(e.target.checked)} />
@@ -673,6 +749,55 @@ function SensorAlertSection({
           <input type="checkbox" checked={recoverNotify} onChange={(e) => setRecoverNotify(e.target.checked)} />
           復旧通知
         </label>
+      </div>
+
+      <div className="mt-4 border-t pt-3">
+        <p className="mb-2 text-xs font-medium text-neutral-500">通知テンプレート（Webhook の本文をカスタマイズ）</p>
+        <TextField label="タイトル" value={tplGlobalTitle} onChange={setTplGlobalTitle} placeholder="{title}" />
+        <div className="mt-2">
+          <p className="mb-1 text-[11px] font-medium text-neutral-500">本文</p>
+          <textarea
+            rows={4}
+            className="w-full rounded-md border px-2 py-1.5 text-sm"
+            value={tplGlobalBody}
+            onChange={(e) => setTplGlobalBody(e.target.value)}
+            placeholder="{title}&#10;{body}&#10;{bar1} / {bar2}&#10;Kit: {kit_id}"
+          />
+        </div>
+        <p className="mt-1 text-[11px] text-neutral-400">
+          変数: {'{title} {body} {severity} {mode} {kit_id} {measured_at} {age_hours} {sensor1} {sensor2} {temperature} {humidity} {bar1} {bar2} {dry_percent} {wet_percent} {stale_hours}'}{' '}
+          — 書式指定も可（例: {'{temperature:.1f}℃'}）。未設定の場合は既定形式で送信します。
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <select className="h-8 rounded-md border px-2 text-sm" value={previewSample} onChange={(e) => setPreviewSample(e.target.value)}>
+            <option value="stale">データ停止 (stale)</option>
+            <option value="risk">水分異常 (risk)</option>
+            <option value="recovered">復旧 (recovered)</option>
+            <option value="test">テスト (test)</option>
+          </select>
+          <button type="button" onClick={previewTemplate} disabled={previewing} className="btn-secondary text-sm">
+            {previewing ? 'プレビュー中…' : 'プレビュー'}
+          </button>
+        </div>
+        {preview && (
+          <div className="mt-2 rounded-md border border-neutral-300 bg-neutral-50 p-2 text-sm">
+            <p className="mb-1 text-[11px] font-medium text-neutral-500">
+              プレビュー（Discord Embed・{preview.sample}・重要度 {preview.severity}）
+            </p>
+            <p className="font-medium">{preview.title || '（タイトル未設定）'}</p>
+            <p className="whitespace-pre-line text-neutral-600">{preview.body}</p>
+            {(preview.payload as any)?.embeds?.[0]?.fields && (
+              <div className="mt-2 grid grid-cols-2 gap-1 text-[11px]">
+                {(preview.payload as any).embeds[0].fields.map((f: any, k: number) => (
+                  <div key={k} className="rounded bg-white p-1">
+                    <span className="text-neutral-500">{f.name}: </span>
+                    <span>{f.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mt-4 mb-2 border-t pt-3">
@@ -685,35 +810,75 @@ function SensorAlertSection({
         <p className="mb-1 text-xs font-medium text-neutral-500">Webhook（複数設定可）</p>
         <div className="space-y-2">
           {webhooks.map((w, i) => (
-            <div key={i} className="grid gap-2 sm:grid-cols-[140px_1fr_110px_1fr_36px]">
-              <TextField label="名前" value={w.name} onChange={(v) => setWebhookField(i, { name: v })} placeholder="Slack" />
-              <TextField label="URL" value={w.url} onChange={(v) => setWebhookField(i, { url: v })} placeholder="https://hooks.example.com/…" />
-              <select
-                className="h-10 rounded-md border px-2 text-sm"
-                value={w.format}
-                onChange={(e) => setWebhookField(i, { format: e.target.value })}
-              >
-                <option value="json">JSON</option>
-                <option value="line_notify">LINE Notify</option>
-                <option value="text">テキスト</option>
-              </select>
-              <TextField label="トークン（任意）" value={w.token} onChange={(v) => setWebhookField(i, { token: v })} placeholder="設定済みならマスク表示" mask />
-              <div className="flex items-end pb-1">
-                <button
-                  type="button"
-                  onClick={() => setWebhooks(webhooks.filter((_, j) => j !== i))}
-                  className="btn-secondary h-10 w-9 px-0 text-sm"
-                  title="削除"
-                >
-                  —
-                </button>
+            <div key={i} className="rounded-md border border-neutral-300 p-2">
+              <div className="grid gap-2 sm:grid-cols-[1fr_150px_160px_1fr_auto]">
+                <TextField label="名前" value={w.name} onChange={(v) => setWebhookField(i, { name: v })} placeholder="Discord" />
+                <div>
+                  <p className="mb-1 text-[11px] font-medium text-neutral-500">形式</p>
+                  <select
+                    className="h-10 w-full rounded-md border px-2 text-sm"
+                    value={w.format}
+                    onChange={(e) => setWebhookField(i, { format: e.target.value })}
+                  >
+                    <option value="json">JSON（汎用）</option>
+                    <option value="discord">Discord（Embed）</option>
+                    <option value="line_notify">LINE Notify</option>
+                    <option value="text">テキスト</option>
+                  </select>
+                </div>
+                <div>
+                  <p className="mb-1 text-[11px] font-medium text-neutral-500">テンプレート</p>
+                  <select
+                    className="h-10 w-full rounded-md border px-2 text-sm"
+                    value={w.template}
+                    onChange={(e) => setWebhookField(i, { template: e.target.value })}
+                  >
+                    <option value="">グローバル適用</option>
+                    <option value="default">default</option>
+                    <option value="concise">concise</option>
+                    <option value="detailed">detailed</option>
+                  </select>
+                </div>
+                <TextField label="トークン（任意）" value={w.token} onChange={(v) => setWebhookField(i, { token: v })} placeholder="設定済みならマスク表示" mask />
+                <div className="flex items-end gap-1 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => moveWebhook(i, -1)}
+                    disabled={i === 0}
+                    className="btn-secondary h-10 w-8 px-0 text-sm disabled:opacity-30"
+                    title="上へ移動"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveWebhook(i, 1)}
+                    disabled={i === webhooks.length - 1}
+                    className="btn-secondary h-10 w-8 px-0 text-sm disabled:opacity-30"
+                    title="下へ移動"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWebhooks(webhooks.filter((_, j) => j !== i))}
+                    className="btn-secondary h-10 w-8 px-0 text-sm"
+                    title="削除"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2">
+                <TextField label="URL" value={w.url} onChange={(v) => setWebhookField(i, { url: v })} placeholder="https://hooks.example.com/…" />
+                <p className="mt-1 text-[11px] text-neutral-400">{webhookHint(w.format, w.url)}</p>
               </div>
             </div>
           ))}
           <div>
             <button
               type="button"
-              onClick={() => setWebhooks([...webhooks, { name: '', url: '', format: 'json', token: '' }])}
+              onClick={() => setWebhooks([...webhooks, { name: '', url: '', format: 'json', token: '', template: '' }])}
               className="btn-secondary text-sm"
             >
               ＋ Webhookを追加
@@ -721,7 +886,7 @@ function SensorAlertSection({
           </div>
         </div>
         <p className="mt-1 text-[11px] text-neutral-400">
-          JSON: 汎用（Slack/Discord/Teams）／LINE Notify形式／テキスト形式で送信します。トークンはLINE Notifyで使用します。
+          ↑↓ で送信順序を変更できます。JSON は Slack/Discord/Teams/独自API 向け、LINE Notify はトークン必須です。
         </p>
 
         <div className="mt-3">
