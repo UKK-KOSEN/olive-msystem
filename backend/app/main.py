@@ -803,6 +803,42 @@ def admin_test_notifications(_: dict = Depends(require_admin)):
     }
 
 
+_TEMPLATE_PREVIEW_SAMPLES: dict = {
+    "stale": {
+        "title": "土壌水分センサー: データ更新停止",
+        "body": "最終データ: 2026-09-11T06:37:38Z（約 6.5 時間前）（Kit: shodoshima-field-01）",
+        "severity": "critical", "mode": "stale",
+        "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T06:37:38Z",
+        "age_hours": 6.5, "sensor1": 4.3, "sensor2": 78.08,
+        "temperature": 27.6, "humidity": 56.3,
+    },
+    "risk": {
+        "title": "土壌水分センサー: 水分値の異常",
+        "body": "土壌水分に異常値が検出されました。",
+        "severity": "warning", "mode": "risk",
+        "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T07:00:00Z",
+        "age_hours": 0, "sensor1": 92.4, "sensor2": 45.1,
+        "temperature": 24.8, "humidity": 61.0,
+    },
+    "recovered": {
+        "title": "土壌水分センサー: 復旧しました",
+        "body": "土壌水分センサーは正常な状態に戻りました。",
+        "severity": "info", "mode": "ok",
+        "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T08:00:00Z",
+        "age_hours": 0, "sensor1": 52.3, "sensor2": 61.8,
+        "temperature": 25.1, "humidity": 57.2,
+    },
+    "test": {
+        "title": "土壌水分センサー: テスト通知",
+        "body": "これはテスト通知です。\n土壌水分センサーで異常が検出された際に、このチャネルへ通知が送信されます。",
+        "severity": "test", "mode": "test",
+        "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T09:00:00Z",
+        "age_hours": 0, "sensor1": 45.0, "sensor2": 62.5,
+        "temperature": 25.5, "humidity": 58.0,
+    },
+}
+
+
 @app.post("/api/admin/soil-config/template-preview")
 def admin_template_preview(payload: dict = Body(...), _: dict = Depends(require_admin)):
     """Render a message template against a sample alert and return the preview.
@@ -818,7 +854,7 @@ def admin_template_preview(payload: dict = Body(...), _: dict = Depends(require_
     Response: rendered title/body plus the payload that would be sent
     (fields, discord embed, etc.).
     """
-    from .sensor_alerts import _render, _resolve_template, _template_context, _discord_payload
+    from .sensor_alerts import _render, _resolve_template, _template_context, _discord_payload, _json_payload
     from .sensor_alerts import load_alerts_config
 
     acfg = load_alerts_config()
@@ -826,42 +862,7 @@ def admin_template_preview(payload: dict = Body(...), _: dict = Depends(require_
     fmt = (payload.get("webhook_format") or "json").lower()
     tmpl = payload.get("template") or {}
 
-    # Synthetic evaluate()-style snapshots for the preview.
-    samples = {
-        "stale": {
-            "title": "土壌水分センサー: データ更新停止",
-            "body": "最終データ: 2026-09-11T06:37:38Z（約 6.5 時間前）（Kit: shodoshima-field-01）",
-            "severity": "critical", "mode": "stale",
-            "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T06:37:38Z",
-            "age_hours": 6.5, "sensor1": 4.3, "sensor2": 78.08,
-            "temperature": 27.6, "humidity": 56.3,
-        },
-        "risk": {
-            "title": "土壌水分センサー: 水分値の異常",
-            "body": "土壌水分に異常値が検出されました。",
-            "severity": "warning", "mode": "risk",
-            "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T07:00:00Z",
-            "age_hours": 0, "sensor1": 92.4, "sensor2": 45.1,
-            "temperature": 24.8, "humidity": 61.0,
-        },
-        "recovered": {
-            "title": "土壌水分センサー: 復旧しました",
-            "body": "土壌水分センサーは正常な状態に戻りました。",
-            "severity": "info", "mode": "ok",
-            "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T08:00:00Z",
-            "age_hours": 0, "sensor1": 52.3, "sensor2": 61.8,
-            "temperature": 25.1, "humidity": 57.2,
-        },
-        "test": {
-            "title": "土壌水分センサー: テスト通知",
-            "body": "これはテスト通知です。\n土壌水分センサーで異常が検出された際に、このチャネルへ通知が送信されます。",
-            "severity": "test", "mode": "test",
-            "kit_id": "shodoshima-field-01", "measured_at": "2026-09-11T09:00:00Z",
-            "age_hours": 0, "sensor1": 45.0, "sensor2": 62.5,
-            "temperature": 25.5, "humidity": 58.0,
-        },
-    }
-    ev = samples.get(sample, samples["test"])
+    ev = _TEMPLATE_PREVIEW_SAMPLES.get(sample, _TEMPLATE_PREVIEW_SAMPLES["test"])
     if not isinstance(tmpl, dict):
         tmpl = _resolve_template(acfg, {"template": tmpl} if tmpl else {})
     tctx = _template_context(ev, acfg)
@@ -877,11 +878,7 @@ def admin_template_preview(payload: dict = Body(...), _: dict = Depends(require_
     elif fmt == "text":
         preview_payload = {"plain": text}
     else:  # json
-        preview_payload = {
-            "title": title, "body": body, "severity": ev["severity"],
-            "type": "sensor_alert", "service": "olive-msystem",
-            "text": text, "content": text,
-        }
+        preview_payload = _json_payload(title, body, ev["severity"], text)
     return {
         "sample": sample,
         "severity": ev["severity"],
@@ -1565,6 +1562,50 @@ def admin_test_soil(_: dict = Depends(require_admin)):
         }
 
 
+def _restore_channel_secrets(seal, old_ch: dict, new_ch: dict) -> None:
+    """Restore original channel secrets when the admin editor sends back masked values."""
+    # Legacy scalar fields.
+    for key, keep in (("webhook_token", 0), ("webhook_url", 16)):
+        new_v = new_ch.get(key)
+        old_v = old_ch.get(key)
+        if old_v and isinstance(new_v, str) and new_v == seal(old_v, keep):
+            new_ch[key] = old_v
+    # Restore the masked LINE Bot channel access token.
+    new_lb = new_ch.get("line_bot")
+    old_lb = old_ch.get("line_bot")
+    if isinstance(new_lb, dict) and isinstance(old_lb, dict):
+        n_tok = new_lb.get("channel_access_token")
+        o_tok = old_lb.get("channel_access_token")
+        if o_tok and isinstance(n_tok, str) and n_tok == seal(str(o_tok), 0):
+            new_lb["channel_access_token"] = o_tok
+    # Restore masked tokens/urls inside the webhooks list entry-by-entry.
+    new_wh = new_ch.get("webhooks") or []
+    old_wh = [w for w in (old_ch.get("webhooks") or []) if isinstance(w, dict)]
+    if isinstance(new_wh, list):
+        for nw in new_wh:
+            if not isinstance(nw, dict):
+                continue
+            n_url = nw.get("url")
+            n_tok = nw.get("token")
+            for ow in old_wh:
+                url_ok = (
+                    n_url
+                    and isinstance(n_url, str)
+                    and n_url == seal(str(ow.get("url", "")), 16)
+                )
+                tok_ok = (
+                    n_tok
+                    and isinstance(n_tok, str)
+                    and n_tok == seal(str(ow.get("token", "")), 0)
+                )
+                if url_ok or tok_ok:
+                    if url_ok:
+                        nw["url"] = ow["url"]
+                    if tok_ok:
+                        nw["token"] = ow["token"]
+                    break
+
+
 @app.put("/api/admin/soil-config")
 def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_admin)):
     """Save soil moisture config from the admin editor (api_key masked in
@@ -1613,46 +1654,7 @@ def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_a
     from .sensor_alerts import _mask_secret as _mask_alerts_secret
     new_ch = ((cfg.get("alerts") or {}).get("channels") or {})
     old_ch = ((existing.get("alerts") or {}).get("channels") or {})
-    # Legacy scalar fields.
-    for key, keep in (("webhook_token", 0), ("webhook_url", 16)):
-        new_v = new_ch.get(key)
-        old_v = old_ch.get(key)
-        if old_v and isinstance(new_v, str) and new_v == _mask_alerts_secret(old_v, keep):
-            new_ch[key] = old_v
-    # Restore the masked LINE Bot channel access token.
-    new_lb = new_ch.get("line_bot")
-    old_lb = old_ch.get("line_bot")
-    if isinstance(new_lb, dict) and isinstance(old_lb, dict):
-        n_tok = new_lb.get("channel_access_token")
-        o_tok = old_lb.get("channel_access_token")
-        if o_tok and isinstance(n_tok, str) and n_tok == _mask_alerts_secret(str(o_tok), 0):
-            new_lb["channel_access_token"] = o_tok
-    # Restore masked tokens/urls inside the webhooks list entry-by-entry.
-    new_wh = new_ch.get("webhooks") or []
-    old_wh = [w for w in (old_ch.get("webhooks") or []) if isinstance(w, dict)]
-    if isinstance(new_wh, list):
-        for nw in new_wh:
-            if not isinstance(nw, dict):
-                continue
-            n_url = nw.get("url")
-            n_tok = nw.get("token")
-            for ow in old_wh:
-                url_ok = (
-                    n_url
-                    and isinstance(n_url, str)
-                    and n_url == _mask_alerts_secret(str(ow.get("url", "")), 16)
-                )
-                tok_ok = (
-                    n_tok
-                    and isinstance(n_tok, str)
-                    and n_tok == _mask_alerts_secret(str(ow.get("token", "")), 0)
-                )
-                if url_ok or tok_ok:
-                    if url_ok:
-                        nw["url"] = ow["url"]
-                    if tok_ok:
-                        nw["token"] = ow["token"]
-                    break
+    _restore_channel_secrets(_mask_alerts_secret, old_ch, new_ch)
     SOIL_MOISTURE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     SOIL_MOISTURE_CONFIG_PATH.write_text(
         yaml.safe_dump(cfg, allow_unicode=True, default_flow_style=False),

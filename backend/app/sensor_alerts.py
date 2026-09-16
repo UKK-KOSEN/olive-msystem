@@ -137,6 +137,16 @@ def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def _http_error_text(exc: urllib.error.HTTPError, limit: int = 200) -> str:
+    """Format an HTTPError as a concise ``HTTP <code>: <detail>`` string."""
+    detail = ""
+    try:
+        detail = exc.read().decode("utf-8", "replace").strip()[:limit]
+    except Exception:
+        pass
+    return f"HTTP {exc.code}" + (f": {detail}" if detail else "")
+
+
 def _deep_merge(base: dict, update: dict) -> None:
     for key, value in update.items():
         if isinstance(value, dict) and isinstance(base.get(key), dict):
@@ -157,22 +167,29 @@ def _load_alerts_raw() -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
-def load_alerts_config() -> dict:
-    """Return the ``alerts:`` section of soil_moisture.yaml merged with defaults."""
-    raw = _load_alerts_raw()
-    merged = json.loads(json.dumps(DEFAULT_ALERTS))
-    if isinstance(raw, dict):
-        _deep_merge(merged, raw)
-    # Backward compatibility: migrate legacy single webhook into webhooks list.
-    ch = merged.get("channels") or {}
+def _migrate_legacy(ch: dict) -> None:
+    """In-place migration: convert a single ``webhook_url``/``webhook_token`` to a webhooks list entry."""
     if not ch.get("webhooks") and (ch.get("webhook_url") or "").strip():
         ch["webhooks"] = [{
             "name": "webhook",
-            "url": (ch.get("webhook_url") or "").strip(),
+            "url": (ch["webhook_url"]).strip(),
             "format": "line_notify" if (ch.get("webhook_token") or "").strip() else "json",
             "token": (ch.get("webhook_token") or "").strip(),
         }]
+
+
+def _merged_config(raw: Optional[dict] = None) -> dict:
+    """Return the ``alerts:`` section of soil_moisture.yaml merged with defaults and legacy-migrated."""
+    merged = json.loads(json.dumps(DEFAULT_ALERTS))
+    if isinstance(raw, dict):
+        _deep_merge(merged, raw)
+    _migrate_legacy(merged.get("channels") or {})
     return merged
+
+
+def load_alerts_config() -> dict:
+    """Return the ``alerts:`` section of soil_moisture.yaml merged with defaults."""
+    return _merged_config(_load_alerts_raw())
 
 
 def _mask_secret(value: str, keep: int = 0) -> str:
@@ -192,9 +209,7 @@ def _mask_secret(value: str, keep: int = 0) -> str:
 
 def mask_alerts_config(raw: dict) -> dict:
     """Mask secrets for the admin editor while keeping the rest visible."""
-    merged = json.loads(json.dumps(DEFAULT_ALERTS))
-    if isinstance(raw, dict):
-        _deep_merge(merged, raw)
+    merged = _merged_config(raw)
     ch = dict(merged.get("channels") or {})
     if ch.get("webhook_url"):
         ch["webhook_url"] = _mask_secret(str(ch["webhook_url"]), 16)
@@ -414,11 +429,11 @@ def _render(text: Optional[str], ctx: dict) -> str:
     return re.sub(r"\{([A-Za-z0-9_]+)(:[^}]*)?\}", repl, text)
 
 
-def _template_context(ev: dict, acfg: dict, dry: float = 0, wet: float = 0) -> dict:
+def _template_context(ev: dict, acfg: dict, dry: Optional[float] = None, wet: Optional[float] = None) -> dict:
     """Flatten an evaluate() snapshot + config thresholds for template use."""
-    if not dry:
+    if dry is None:
         dry = float(acfg.get("dry_percent", 15))
-    if not wet:
+    if wet is None:
         wet = float(acfg.get("wet_percent", 85))
     ctx = dict(ev or {})
     ctx["bar1"] = _bar(ctx.get("sensor1"), dry, wet)
@@ -454,20 +469,12 @@ def _resolve_template(acfg: dict, entry: dict) -> dict:
 
 
 def _build_webhook_entries(acfg: dict) -> list[dict]:
-    """Resolve configured webhooks (declarative list, plus legacy fallback)."""
+    """Return the configured webhooks list (already legacy-migrated by ``load_alerts_config``)."""
     ch = acfg.get("channels") or {}
-    entries = []
-    for w in (ch.get("webhooks") or []):
-        if isinstance(w, dict) and (w.get("url") or "").strip():
-            entries.append(w)
-    if not entries and (ch.get("webhook_url") or "").strip():
-        entries.append({
-            "name": "webhook",
-            "url": (ch.get("webhook_url") or "").strip(),
-            "format": "line_notify" if (ch.get("webhook_token") or "").strip() else "json",
-            "token": (ch.get("webhook_token") or "").strip(),
-        })
-    return entries
+    return [
+        w for w in (ch.get("webhooks") or [])
+        if isinstance(w, dict) and (w.get("url") or "").strip()
+    ]
 
 
 # Discord embed colour (decimal) per severity.
@@ -527,6 +534,22 @@ def _discord_payload(title: str, body: str, severity: str, text: str, ctx: Optio
     return {"content": text, "embeds": [embed]}
 
 
+def _json_payload(title: str, body: str, severity: str, text: str) -> dict:
+    """Generic webhook JSON payload (custom APIs + Slack/Discord rendered fields)."""
+    # ``text``/``content`` are the fields Slack (text) and Discord (content)
+    # actually render.  Without ``content`` Discord rejects the message with
+    # HTTP 400 ("Cannot send an empty message", code 50006).
+    return {
+        "title": title,
+        "body": body,
+        "severity": severity,
+        "type": "sensor_alert",
+        "service": "olive-msystem",
+        "text": text,
+        "content": text,
+    }
+
+
 def _send_one_webhook(entry: dict, title: str, body: str, severity: str, tctx: Optional[dict] = None):
     """POST to a single webhook entry.
 
@@ -566,30 +589,13 @@ def _send_one_webhook(entry: dict, title: str, body: str, severity: str, tctx: O
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         else:  # json
             headers.setdefault("Content-Type", "application/json")
-            # Generic fields for custom APIs plus the platform fields that
-            # Slack (text) and Discord (content) actually render.  Without
-            # ``content`` Discord rejects the message with HTTP 400
-            # ("Cannot send an empty message", code 50006).
-            payload = {
-                "title": title,
-                "body": body,
-                "severity": severity,
-                "type": "sensor_alert",
-                "service": "olive-msystem",
-                "text": text,
-                "content": text,
-            }
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            data = json.dumps(_json_payload(title, body, severity, text), ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         with _WEBHOOK_OPENER.open(req, timeout=timeout):
             pass
         return "ok", None
     except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read().decode("utf-8", "replace").strip()[:200]
-        except Exception:
-            detail = ""
-        return "error", f"HTTP {exc.code}" + (f": {detail}" if detail else "")
+        return "error", _http_error_text(exc, 200)
     except Exception as exc:
         return "error", str(exc)
 
@@ -623,11 +629,7 @@ def _send_line_bot(acfg: dict, title: str, body: str, severity: str):
                 return "error", f"LINE API HTTP {resp.status}"
         return "ok", None
     except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read().decode("utf-8", "replace")[:300]
-        except Exception:
-            detail = str(exc)
-        return "error", f"HTTP {exc.code}: {detail}"
+        return "error", _http_error_text(exc, 300)
     except Exception as exc:
         return "error", str(exc)
 
@@ -825,7 +827,7 @@ def status(store) -> dict:
     """Current monitoring snapshot for the admin page."""
     ev = evaluate()
     return {
-        "enabled": load_alerts_config().get("enabled", True),
+        "enabled": (ev.get("alerts") or {}).get("enabled", True),
         "configured": ev.get("configured"),
         "evaluation": ev,
         "state": store.get_sensor_alert_state(),

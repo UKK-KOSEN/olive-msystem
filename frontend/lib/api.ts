@@ -451,7 +451,7 @@ async function fetchWithTimeout(
 async function fetchRetry(
   url: string,
   init: RequestInit,
-  opts?: { timeoutMs?: number; retry?: boolean; attempt?: number }
+  opts?: { timeoutMs?: number; retry?: boolean }
 ): Promise<Response> {
   const retry = opts?.retry ?? true;
   const maxAttempts = retry ? 2 : 1;
