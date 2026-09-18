@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api, FarmMapTree, FarmTreeRecord, FarmerRecord } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -9,6 +9,10 @@ import { Snackbar } from '@/components/Snackbar';
 
 const HEALTH_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
 const MAP_COLS = 8;
+const CELL_W = 118;
+const PAD_X = 70;
+const PAD_Y = 80;
+const ZOOM_LEVELS = [0.75, 1, 1.5, 2] as const;
 
 type Modal = { mode: 'add'; prefill?: string } | { mode: 'edit'; tree: FarmTreeRecord } | null;
 
@@ -23,9 +27,12 @@ export default function FarmMapPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [onlyIssues, setOnlyIssues] = useState(false);
+  const [search, setSearch] = useState('');
+  const [zoom, setZoom] = useState(1);
   const [modal, setModal] = useState<Modal>(null);
   const [busy, setBusy] = useState(false);
   const [snackbar, setSnackbar] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const farmerParam = useMemo(
     () => (isAdmin ? (farmerId != null ? farmerId : undefined) : undefined),
@@ -92,6 +99,19 @@ export default function FarmMapPage() {
     return out;
   }, [data]);
 
+  const query = search.trim().toLowerCase();
+  const scoredTrees = useMemo(() => {
+    const arr = data?.trees ?? [];
+    const byRow: Record<number, { sum: number; n: number }> = {};
+    for (const t of arr) {
+      if (!t.state) continue;
+      byRow[t.row] = byRow[t.row] || { sum: 0, n: 0 };
+      byRow[t.row].sum += t.state.score;
+      byRow[t.row].n += 1;
+    }
+    return byRow;
+  }, [data]);
+
   const selectedTree = useMemo(
     () => data?.trees.find((t) => t.tree_id === selected) ?? null,
     [data, selected]
@@ -102,8 +122,8 @@ export default function FarmMapPage() {
   );
 
   const mapW = data?.map.width ?? 1084;
-  const mapH = data?.map.height ?? 400;
   const maxRow = Math.max(...(data?.trees.map((t) => t.row) ?? [1]));
+  const mapH = data?.map.height ?? PAD_Y + maxRow * 130 + 30;
 
   const handleImport = async () => {
     setBusy(true);
@@ -131,6 +151,13 @@ export default function FarmMapPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const applyZoom = (z: number) => {
+    setZoom(z);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ left: 0, top: 0 });
+    });
   };
 
   return (
@@ -185,35 +212,65 @@ export default function FarmMapPage() {
         </section>
       )}
 
-      {/* legend + filter */}
-      <section className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-neutral-200 bg-white p-3 text-sm">
+      {/* legend + filter + search */}
+      <section className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-neutral-200 bg-white p-3 text-sm">
         <span className="font-medium text-neutral-700">凡例</span>
         {HEALTH_ORDER.map((k) => (
           <span key={k} className="flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-full" style={{ background: healthColor(k) }} />
             <span className="text-neutral-600">{healthJa(k)}</span>
+            <span className="rounded-full bg-neutral-100 px-1.5 text-[11px] tabular-nums text-neutral-500">
+              {summary.health[k] ?? 0}
+            </span>
           </span>
         ))}
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-3 w-3 rounded-full border border-dashed border-neutral-400 bg-transparent" />
-          <span className="text-neutral-600">未登録の木</span>
+          <span className="text-neutral-600">未登録</span>
+          <span className="rounded-full bg-neutral-100 px-1.5 text-[11px] tabular-nums text-neutral-500">{summary.unregistered}</span>
         </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-3 w-3 rounded-full border border-neutral-400 bg-neutral-50" />
           <span className="text-neutral-600">未観測</span>
+          <span className="rounded-full bg-neutral-100 px-1.5 text-[11px] tabular-nums text-neutral-500">{summary.unobserved}</span>
         </span>
-        <label className="ml-auto flex cursor-pointer items-center gap-2 text-neutral-700">
-          <input
-            type="checkbox"
-            checked={onlyIssues}
-            onChange={(e) => setOnlyIssues(e.target.checked)}
-            className="h-4 w-4 accent-olive-700"
-          />
-          注意・要管理のみを強調
-        </label>
+
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          <div className="relative">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="樹木ID・名前で検索"
+              className="w-44 rounded-lg border border-neutral-300 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-olive-500 focus:outline-none"
+            />
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-neutral-700">
+            <input
+              type="checkbox"
+              checked={onlyIssues}
+              onChange={(e) => setOnlyIssues(e.target.checked)}
+              className="h-4 w-4 accent-olive-700"
+            />
+            注意・要管理のみを強調
+          </label>
+        </div>
       </section>
 
-      {/* summary strip */}
+      {/* summary strip + distribution bar */}
       <section className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
         <SummaryCard label="総樹木数" value={String(summary.total)} />
         <SummaryCard label="登録済み" value={String(summary.registered)} color="#374151" />
@@ -226,6 +283,15 @@ export default function FarmMapPage() {
 
       {snackbar && (
         <Snackbar message={snackbar.message} kind={snackbar.kind} onClose={() => setSnackbar(null)} />
+      )}
+
+      {(() => {
+        const hb = healthBreakdown(data?.trees);
+        return hb ? <HealthBreakdown counts={hb} /> : null;
+      })()}
+
+      {info && (
+        <div className="mt-3 rounded-lg bg-olive-50 px-3 py-2.5 text-sm text-olive-800">{info}</div>
       )}
 
       {loading ? (
@@ -241,54 +307,170 @@ export default function FarmMapPage() {
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
-            <svg
-              viewBox={`0 0 ${mapW} ${mapH}`}
-              className="block h-auto w-full"
-              style={{ background: 'linear-gradient(180deg, #f1f7ee 0%, #e6f0df 100%)' }}
-            >
-              {/* column labels (列) */}
-              {Array.from({ length: MAP_COLS }, (_, i) => (
-                <text
-                  key={`col-${i}`}
-                  x={70 + i * 118 + 59}
-                  y={46}
-                  fontSize={12}
-                  fontWeight={600}
-                  fill="#7a9772"
-                  textAnchor="middle"
-                >
-                  列 {i + 1}
-                </text>
-              ))}
-              {/* row labels (畝) */}
-              {Array.from({ length: maxRow }, (_, i) => (
-                <text
-                  key={`row-${i}`}
-                  x={42}
-                  y={70 + i * 130 + 65}
-                  fontSize={12}
-                  fontWeight={600}
-                  fill="#7a9772"
-                  textAnchor="middle"
-                >
-                  畝 {i + 1}
-                </text>
-              ))}
-
-              {/* trees */}
-              {data.trees
-                .filter((t) => !onlyIssues || t.state == null || t.state.label === 'caution' || t.state.label === 'danger')
-                .map((t) => (
-                  <TreeNode
-                    key={t.tree_id}
-                    t={t}
-                    dimmed={onlyIssues && t.state != null && t.state.label !== 'caution' && t.state.label !== 'danger'}
-                    selected={selected === t.tree_id}
-                    onSelect={(id) => setSelected(selected === id ? null : id)}
-                  />
+          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+            {/* map toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 bg-neutral-50/60 px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-neutral-500">
+                <span className="font-medium text-neutral-700">
+                  {data.farmer?.farm_name || data.farmer?.display_name || 'この農家'}の区画
+                </span>
+                <span>・畝 {maxRow} ・ 列 {MAP_COLS}</span>
+                {query && (
+                  <span className="rounded-full bg-olive-100 px-2 py-0.5 font-medium text-olive-700">
+                    検索: 「{search.trim()}」 {matchedCount(data.trees, query)} 件
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="mr-1 text-xs text-neutral-400">表示</span>
+                {ZOOM_LEVELS.map((z) => (
+                  <button
+                    key={z}
+                    type="button"
+                    onClick={() => applyZoom(z)}
+                    className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                      zoom === z ? 'bg-olive-700 text-white' : 'text-neutral-600 hover:bg-neutral-100'
+                    }`}
+                  >
+                    {Math.round(z * 100)}%
+                  </button>
                 ))}
-            </svg>
+              </div>
+            </div>
+
+            <div ref={scrollRef} className="max-h-[560px] overflow-auto bg-[#eef4e9]">
+              <div style={{ width: `${zoom * 100}%`, minWidth: '100%' }}>
+                <svg
+                  viewBox={`0 0 ${mapW} ${mapH}`}
+                  className="block h-auto w-full"
+                  style={{ background: 'linear-gradient(180deg, #f3f8ef 0%, #e7f1e0 100%)' }}
+                >
+                  {/* field outline */}
+                  <rect
+                    x={PAD_X - 6}
+                    y={PAD_Y - 10}
+                    width={MAP_COLS * CELL_W + 12}
+                    height={(maxRow * 130) + 20}
+                    rx={14}
+                    fill="rgba(255,255,255,0.35)"
+                    stroke="rgba(122,151,114,0.5)"
+                    strokeWidth={1.5}
+                  />
+
+                  {/* row bands */}
+                  {Array.from({ length: maxRow }, (_, r) => (
+                    <rect
+                      key={`band-${r}`}
+                      x={PAD_X}
+                      y={PAD_Y + r * 130}
+                      width={MAP_COLS * CELL_W}
+                      height={130}
+                      fill={r % 2 === 1 ? 'rgba(255,255,255,0.35)' : 'transparent'}
+                    />
+                  ))}
+
+                  {/* column separators */}
+                  {Array.from({ length: MAP_COLS + 1 }, (_, i) => (
+                    <line
+                      key={`col-s-${i}`}
+                      x1={PAD_X + i * CELL_W}
+                      y1={PAD_Y + 34}
+                      x2={PAD_X + i * CELL_W}
+                      y2={PAD_Y + maxRow * 130}
+                      stroke="rgba(122,151,114,0.22)"
+                      strokeWidth={1}
+                    />
+                  ))}
+
+                  {/* row separators */}
+                  {Array.from({ length: maxRow + 1 }, (_, r) => (
+                    <line
+                      key={`row-s-${r}`}
+                      x1={PAD_X}
+                      y1={PAD_Y + r * 130}
+                      x2={PAD_X + MAP_COLS * CELL_W}
+                      y2={PAD_Y + r * 130}
+                      stroke="rgba(122,151,114,0.22)"
+                      strokeWidth={1}
+                    />
+                  ))}
+
+                  {/* column header band */}
+                  <rect
+                    x={PAD_X}
+                    y={PAD_Y}
+                    width={MAP_COLS * CELL_W}
+                    height={34}
+                    fill="rgba(122,151,114,0.08)"
+                  />
+                  {Array.from({ length: MAP_COLS }, (_, i) => (
+                    <text
+                      key={`col-${i}`}
+                      x={PAD_X + i * CELL_W + CELL_W / 2}
+                      y={PAD_Y + 21}
+                      fontSize={12}
+                      fontWeight={700}
+                      fill="#7a9772"
+                      textAnchor="middle"
+                    >
+                      列 {i + 1}
+                    </text>
+                  ))}
+
+                  {/* row labels (畝) */}
+                  {Array.from({ length: maxRow }, (_, i) => {
+                    const r = i + 1;
+                    const s = scoredTrees[r];
+                    return (
+                      <g key={`row-${i}`}>
+                        <text
+                          x={PAD_X - 21}
+                          y={PAD_Y + i * 130 + 62}
+                          fontSize={12}
+                          fontWeight={700}
+                          fill="#7a9772"
+                          textAnchor="middle"
+                        >
+                          畝 {r}
+                        </text>
+                        {s && (
+                          <text
+                            x={PAD_X - 21}
+                            y={PAD_Y + i * 130 + 78}
+                            fontSize={9}
+                            fontWeight={600}
+                            fill="#9db395"
+                            textAnchor="middle"
+                          >
+                            {Math.round((s.sum / s.n) * 100)}点
+                          </text>
+                        )}
+                      </g>
+                    );
+                  })}
+
+                  {/* trees */}
+                  {data.trees
+                    .filter((t) => !onlyIssues || t.state == null || t.state.label === 'caution' || t.state.label === 'danger')
+                    .map((t) => {
+                      const matches = !query || includesQuery(t, query);
+                      return (
+                        <TreeNode
+                          key={t.tree_id}
+                          t={t}
+                          dimmed={
+                            (onlyIssues && t.state != null && t.state.label !== 'caution' && t.state.label !== 'danger') ||
+                            (!!query && !matches)
+                          }
+                          hidden={!!query && !matches}
+                          selected={selected === t.tree_id}
+                          onSelect={(id) => setSelected(selected === id ? null : id)}
+                        />
+                      );
+                    })}
+                </svg>
+              </div>
+            </div>
           </div>
 
           <TreeDetail
@@ -384,14 +566,78 @@ export default function FarmMapPage() {
   );
 }
 
+function includesQuery(t: FarmMapTree, q: string): boolean {
+  return t.tree_id.toLowerCase().includes(q) || (t.name ?? '').toLowerCase().includes(q);
+}
+
+function matchedCount(trees: FarmMapTree[], q: string): number {
+  return trees.filter((t) => includesQuery(t, q)).length;
+}
+
+function healthBreakdown(trees?: FarmMapTree[] | null): Record<string, number> | null {
+  if (!trees || trees.length === 0) return null;
+  const counts: Record<string, number> = { happy: 0, good: 0, caution: 0, danger: 0, unobserved: 0 };
+  for (const t of trees) {
+    if (!t.state) {
+      counts.unobserved += 1;
+    } else {
+      counts[t.state.label] = (counts[t.state.label] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function healthBreakdownTotal(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((a, b) => a + b, 0);
+}
+
+/** Compact stacked distribution bar for the current farm. */
+function HealthBreakdown({ counts }: { counts: Record<string, number> }) {
+  const total = healthBreakdownTotal(counts);
+  const segs: { key: string; label: string; color: string; count: number }[] = [
+    { key: 'happy', label: '健康', color: healthColor('happy'), count: counts.happy ?? 0 },
+    { key: 'good', label: '良好', color: healthColor('good'), count: counts.good ?? 0 },
+    { key: 'caution', label: '注意', color: healthColor('caution'), count: counts.caution ?? 0 },
+    { key: 'danger', label: '要管理', color: healthColor('danger'), count: counts.danger ?? 0 },
+    { key: 'unobserved', label: '未観測', color: '#d6d6d6', count: counts.unobserved ?? 0 },
+  ];
+  return (
+    <div className="mb-4 rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
+      <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-neutral-100">
+        {segs.map((s) =>
+          s.count > 0 ? (
+            <div
+              key={s.key}
+              className="h-full transition-all"
+              style={{ width: `${(s.count / total) * 100}%`, background: s.color }}
+            />
+          ) : null
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+        {segs.filter((s) => s.count > 0).map((s) => (
+          <span key={s.key} className="inline-flex items-center gap-1.5 text-[11px] text-neutral-500">
+            <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
+            {s.label}
+            <span className="tabular-nums font-medium text-neutral-700">{s.count}</span>
+            <span className="text-neutral-400">({Math.round((s.count / total) * 100)}%)</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TreeNode({
   t,
   dimmed,
+  hidden,
   selected,
   onSelect,
 }: {
   t: FarmMapTree;
   dimmed: boolean;
+  hidden?: boolean;
   selected: boolean;
   onSelect: (id: string) => void;
 }) {
@@ -403,7 +649,13 @@ function TreeNode({
       onSelect(t.tree_id);
     }
   };
-  return (
+  const tooltipParts = [`${t.tree_id} — ${t.state ? `${healthJa(t.state.label)} ${Math.round(t.state.score * 100)}点` : '未観測'}`];
+  tooltipParts.push(t.registered ? `畝 ${t.row}・列 ${t.col}` : '未登録（仮配置）');
+  if (t.observation_count > 0) tooltipParts.push(`観測 ${t.observation_count}回`);
+  if (t.last_seen) tooltipParts.push(`最終 ${t.last_seen.slice(0, 10)}`);
+  if (t.state?.message) tooltipParts.push(t.state.message);
+
+  return hidden ? null : (
     <g role="button" tabIndex={0} aria-label={`樹木 ${t.tree_id}`} onKeyDown={handleKeyDown}>
       <circle
         cx={t.x}
@@ -414,33 +666,40 @@ function TreeNode({
         strokeWidth={1.5}
         strokeDasharray="4 4"
       />
-      <g
-        onClick={() => onSelect(t.tree_id)}
-        className="cursor-pointer"
-        opacity={dimmed ? 0.2 : 1}
-        style={{ transition: 'opacity 0.15s' }}
-      >
-        <title>{`${t.tree_id} — ${t.state ? healthJa(t.state.label) : '未観測'}${t.registered ? '' : '（未登録）'}`}</title>
+      <g onClick={() => onSelect(t.tree_id)} className="cursor-pointer" opacity={dimmed ? 0.25 : 1} style={{ transition: 'opacity 0.15s' }}>
+        <title>{tooltipParts.join('\n')}</title>
+        {/* crown */}
         <circle
           cx={t.x}
           cy={t.y}
           r={17}
-          fill={t.state ? color : '#f6f6f6'}
+          fill={t.state ? color + '26' : '#f6f6f6'}
           stroke={t.registered ? color : '#b6b6b6'}
           strokeWidth={3}
           strokeDasharray={t.registered ? undefined : '4 4'}
         />
-        <circle cx={t.x} cy={t.y} r={6} fill="rgba(255,255,255,0.85)" />
+        {/* inner core */}
+        <circle cx={t.x} cy={t.y} r={6} fill={t.state ? color : '#ffffff'} />
         {t.state?.label === 'danger' && (
           <text x={t.x} y={t.y + 2.5} fontSize={11} fontWeight={700} fill="#c25a4a" textAnchor="middle">
             !
           </text>
+        )}
+        {/* observation count badge */}
+        {t.observation_count > 0 && (
+          <g>
+            <circle cx={t.x + 16} cy={t.y - 16} r={8} fill="#ffffff" stroke={color} strokeWidth={1.5} />
+            <text x={t.x + 16} y={t.y - 12.5} fontSize={8.5} fontWeight={800} fill="#4a6a46" textAnchor="middle">
+              {Math.min(t.observation_count, 99)}
+            </text>
+          </g>
         )}
         {!t.registered && (
           <text x={t.x} y={t.y - 26} fontSize={9.5} fontWeight={600} fill="#c99a2e" textAnchor="middle">
             未登録
           </text>
         )}
+        {/* label + score */}
         <text
           x={t.x}
           y={t.y + 34}
@@ -454,6 +713,21 @@ function TreeNode({
         >
           {label}
         </text>
+        {t.state && (
+          <text
+            x={t.x}
+            y={t.y + 34 + (selected ? 13 : 0)}
+            fontSize={selected ? 10 : 0}
+            fontWeight={600}
+            fill={color}
+            textAnchor="middle"
+            paintOrder="stroke"
+            stroke="rgba(255,255,255,0.95)"
+            strokeWidth={3}
+          >
+            {Math.round(t.state.score * 100)}点
+          </text>
+        )}
       </g>
     </g>
   );
