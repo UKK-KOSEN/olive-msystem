@@ -9,7 +9,8 @@ rem  it restarts after a short delay. Single-instance
 rem  guard prevents double startup.
 rem ============================================
 
-set PORT=3001
+if not defined FRONTEND_PORT set FRONTEND_PORT=3001
+set PORT=%FRONTEND_PORT%
 
 :check
 netstat -ano | findstr /R /C:":%PORT% .*LISTENING" >nul 2>&1

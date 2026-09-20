@@ -49,6 +49,20 @@ def backup_db(src: Path, dst: Path) -> bool:
         return False
 
 
+def verify_db(path: Path) -> bool:
+    """Verify a backup with SQLite's integrity check."""
+    try:
+        con = sqlite3.connect(str(path))
+        try:
+            result = con.execute("PRAGMA integrity_check").fetchone()
+            return bool(result and result[0] == "ok")
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001
+        log(f"db verify failed: {e}")
+        return False
+
+
 def prune(out: Path, keep: int) -> None:
     dirs = sorted(
         (p for p in out.glob("20*_20*") if p.is_dir()),
@@ -65,6 +79,8 @@ def main() -> int:
     ap.add_argument("--keep", type=int, default=10)
     ap.add_argument("--include-storage", action="store_true",
                     help="also copy the annotated-frame storage dir (may be large)")
+    ap.add_argument("--verify", action="store_true",
+                    help="run PRAGMA integrity_check on the copied database")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
 
@@ -75,6 +91,9 @@ def main() -> int:
     ok = backup_db(db, dest / "olive_msystem.db") if db.exists() else False
     if not ok:
         log("ABORT: DB backup failed, keeping destination anyway")
+        return 1
+    if args.verify and not verify_db(dest / "olive_msystem.db"):
+        log("ABORT: DB integrity verification failed")
         return 1
 
     for name, src in INCLUDE:

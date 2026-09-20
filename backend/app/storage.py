@@ -44,15 +44,24 @@ def verify_password(password: str, stored: str) -> bool:
 class Store:
     """Thread-safe SQLite store. Uses one connection per call."""
 
-    def __init__(self, db_path=None):
+    def __init__(self, db_path=None, *, initialize_schema=True, read_only=False):
         self.path = Path(db_path or DB_PATH)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.read_only = read_only
+        if not self.read_only:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._init_schema()
+        if initialize_schema and not self.read_only:
+            self._init_schema()
 
     def _connect(self):
-        con = sqlite3.connect(str(self.path), timeout=30)
+        if self.read_only:
+            uri = f"{self.path.resolve().as_uri()}?mode=ro"
+            con = sqlite3.connect(uri, uri=True, timeout=30)
+        else:
+            con = sqlite3.connect(str(self.path), timeout=30)
         con.row_factory = sqlite3.Row
+        if self.read_only:
+            con.execute("PRAGMA query_only=ON")
         return con
 
     def _init_schema(self):

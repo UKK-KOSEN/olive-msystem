@@ -124,14 +124,18 @@ app/
 | 解析済みフレーム・注釈画像 | `backend/storage/<id>/` |
 | アプリ設定 | `backend/config/settings.json` |
 | 土壌水分センサー設定 | `backend/config/soil_moisture.yaml`（APIキー含む＝コミット禁止） |
-| ログ | `logs/`（backend.log / backend-uvicorn.log / frontend.log / monitor.log / backup.log） |
+| ログ | `logs/`（backend.log / backend-uvicorn.log / frontend.log / monitor.log / redundant-monitor.log / backup.log） |
 
 ## 冗長化・運用
 
 - `run_backend.bat` / `run_frontend.bat`: watchdog による自動再起動（二重起動防止）。
-- `ops/monitor.ps1` + `ops/start-monitor.bat`: `/api/health` を定期的に監視し、
-  応答が無い場合に自動再起動＋復旧イベントを `logs/monitor.log` へ記録。
-- `ops/backup.py` + `ops/backup.bat`: SQLite のオンライン一貫バックアップと
-  config/uploads/storage のコピー（保持数指定可）。
+- `ops/redundant-monitor.ps1` + `ops\redundant-start.bat`: active（既定8000）と standby（既定8001）を監視し、active の到達不能またはDB利用不可が閾値回数続いた場合、primaryポートに新しい active プロセスを起動する。standbyは別ポートで待機を継続する。
+- standby は書き込みAPIを拒否し、Runner・センサー監視スレッド・管理データ初期化を停止し、SQLiteをread-onlyで開く。
+- `/api/health` は `role`、`ready`、`can_promote` を返し、`/api/health/ready` は active 且つDB利用可能の場合だけ200を返す。
+- SQLite（WAL）と `backend/data/`、`backend/uploads/`、`backend/storage/` は同一ホスト上で2プロセスが共有する。このため冗長化の対象はバックエンドプロセス障害であり、ホスト障害・ディスク障害には対応しない。
+- `ops/monitor.ps1` + `ops/start-monitor.bat`: 単一バックエンド構成向けの `/api/health` 監視。
+- `ops/backup.py` + `ops/backup.bat`: SQLite のオンライン一貫バックアップと config/uploads/storage のコピー（`--verify` で整合性確認）。
+
+真正のホスト冗長化が必要な場合は、SQLiteを外部DBへ、ローカルファイルをSMB/S3等の共有ストレージへ移行する。
 
 詳細は [operations.md](operations.md) を参照してください。

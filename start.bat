@@ -2,10 +2,15 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+if not defined BACKEND_PORT set BACKEND_PORT=8000
+if not defined BACKEND_HOST set BACKEND_HOST=127.0.0.1
+if not defined FRONTEND_PORT set FRONTEND_PORT=3001
+if not defined BACKEND_URL set BACKEND_URL=http://127.0.0.1:%BACKEND_PORT%
+
 echo ============================================
-echo   olive-msystem 起動（冗長構成）
-echo   バックエンド (FastAPI) : http://localhost:8000
-echo   フロントエンド(Next.js): http://localhost:3001
+echo   olive-msystem 起動（watchdog構成）
+echo   バックエンド (FastAPI) : http://%BACKEND_HOST%:%BACKEND_PORT%
+echo   フロントエンド(Next.js): http://localhost:%FRONTEND_PORT%
 echo   二重起動防止 + 自動再起動 有効
 echo ============================================
 
@@ -43,10 +48,13 @@ exit /b 0
 
 :run_backend
 cd /d "%~dp0backend"
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+set HOST=%BACKEND_HOST%
+set PORT=%BACKEND_PORT%
+.venv\Scripts\python.exe -m uvicorn app.main:app --host %BACKEND_HOST% --port %BACKEND_PORT%
 exit /b 0
 
 :run_frontend
 cd /d "%~dp0frontend"
-call npm run start -- -p 3001
+set BACKEND_URL=%BACKEND_URL%
+call npm run start -- -p %FRONTEND_PORT%
 exit /b 0

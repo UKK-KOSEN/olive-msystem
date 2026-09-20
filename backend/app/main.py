@@ -8,6 +8,8 @@ import time
 import traceback
 import uvicorn
 import yaml
+from datetime import datetime as _dt
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -21,7 +23,8 @@ from .analyzer import OliveAnalyzer, parse_time
 from .captured import extract_captured_at, parse_captured_candidate
 from .translate_report import explain_detection_ja
 from .auth import get_current_user, require_admin
-from .config import (CORS_ORIGINS, DATA_DIR, DB_PATH, MAX_UPLOAD_MB, PORT,
+from .config import (CORS_ORIGINS, DATA_DIR, DB_PATH, HOST, INSTANCE_ID,
+                     INSTANCE_ROLE, IS_ACTIVE, MAX_UPLOAD_MB, PORT,
                      ROOT, SETTINGS_PATH, SOIL_MOISTURE_CONFIG_PATH,
                      STORAGE_DIR, UPLOAD_DIR, ensure_dirs,
                      load_settings, save_settings)
@@ -49,9 +52,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-store = Store(DB_PATH)
-runner = Runner(store, workers=1)
-grader = OliveAnalyzer()
+
+@app.middleware("http")
+async def standby_read_only(request, call_next):
+    if (
+        INSTANCE_ROLE == "standby"
+        and request.method not in {"GET", "HEAD", "OPTIONS"}
+        and request.url.path not in {"/api/health", "/api/health/ready"}
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "スタンバイインスタンスでは書き込み操作を受け付けません"},
+        )
+    return await call_next(request)
+
+
+store = Store(DB_PATH, initialize_schema=IS_ACTIVE, read_only=not IS_ACTIVE)
+runner = Runner(store, workers=1) if IS_ACTIVE else None
+
+
+@lru_cache(maxsize=1)
+def get_grader():
+    return OliveAnalyzer()
+
+
+if IS_ACTIVE:
+    get_grader()
 
 # Log to both console and a rotating file, so a crash/restart can be
 # investigated later even if the console window was closed.
@@ -72,25 +98,40 @@ except Exception:
 @app.get("/api/health")
 def health():
     """Liveness probe for the ops monitor / load balancer (no auth)."""
-    db_ok = True
+    counts = {}
     try:
-        store.count()
+        counts = store.count()
     except Exception:
         db_ok = False
     return {
         "status": "ok" if db_ok else "degraded",
         "service": "olive-msystem-backend",
         "version": app.version,
+        "instance_id": INSTANCE_ID,
+        "role": INSTANCE_ROLE,
+        "active": IS_ACTIVE,
+        "ready": IS_ACTIVE and db_ok,
+        "can_promote": db_ok,
+        "write_enabled": IS_ACTIVE,
         "db_status": "ok" if db_ok else "error",
         "db_path": str(DB_PATH),
         "uptime_sec": int(time.time() - _BOOT_TIME),
         "timestamp": _dt.now().astimezone().isoformat(timespec="seconds"),
+        **counts,
     }
+
+
+@app.get("/api/health/ready")
+def health_ready():
+    """Readiness probe: return 503 until the active instance can use its DB."""
+    payload = health()
+    if not payload["ready"]:
+        raise HTTPException(status_code=503, detail="backend is not ready")
+    return payload
 
 
 # ---- Sensor anomaly monitor (background thread) ---------------------------
 import threading
-from datetime import datetime as _dt
 from .sensor_alerts import run_monitor as _sensor_alerts_run
 from .sensor_alerts import load_alerts_config as _alerts_cfg
 
@@ -108,10 +149,6 @@ def _sensor_monitor_loop():
             logger.exception("sensor monitor error")
         interval_sec = max(float(_alerts_cfg().get("check_interval_minutes", 10)) * 60, 30)
         time.sleep(interval_sec)
-
-
-_sensor_thread = threading.Thread(target=_sensor_monitor_loop, daemon=True)
-_sensor_thread.start()
 
 
 def _seed_admin() -> None:
@@ -145,7 +182,12 @@ def _seed_admin() -> None:
     logger.info("Created default admin account: username=%s password=%s", username, password)
 
 
-_seed_admin()
+if IS_ACTIVE:
+    _sensor_thread = threading.Thread(target=_sensor_monitor_loop, daemon=True)
+    _sensor_thread.start()
+    _seed_admin()
+else:
+    _sensor_thread = None
 
 
 # --------------------------------------------------------------------------
@@ -177,12 +219,6 @@ async def starlette_http_exception_handler(request, exc: StarletteHTTPException)
     if exc.status_code >= 500:
         logger.error("http %s error on %s: %s", exc.status_code, request.url.path, exc.detail)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-
-
-@app.get("/api/health")
-def api_health():
-    counts = store.count()
-    return {"status": "ok", **counts}
 
 
 @app.get("/api/versions")
@@ -541,7 +577,7 @@ async def upload_video(file: UploadFile = File(...),
                                recorded_at=recorded_at)
     # Try to read metadata (duration etc.).
     try:
-        info = grader.video_info(str(dest))
+        info = get_grader().video_info(str(dest))
         store.update_video(video_id, duration_sec=info["duration_seconds"],
                            fps=info["fps"], width=info["width"], height=info["height"])
     except Exception:
@@ -563,7 +599,7 @@ def list_videos(status: Optional[str] = Query(None), user: dict = Depends(get_cu
 @app.get("/api/videos/jobs")
 def video_jobs(user: dict = Depends(get_current_user)):
     """Return the current processing queue with progress for the running user."""
-    jobs = runner.jobs()
+    jobs = runner.jobs() if runner is not None else []
     out = []
     for j in jobs:
         if user["role"] != "admin":
@@ -668,7 +704,7 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
     out_dir.mkdir(parents=True, exist_ok=True)
     source = f"image#{image_id}" + (f":{req.tree_id}" if req.tree_id else "")
     try:
-        rec = grader.analyze_image_file(str(image_path), str(out_dir), source,
+        rec = get_grader().analyze_image_file(str(image_path), str(out_dir), source,
                                         drone_mode=req.drone_mode,
                                         upscale=req.upscale)
     except Exception as exc:
@@ -915,6 +951,8 @@ def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
              user: dict = None,
              drone_mode: bool = False,
              upscale: Optional[bool] = None):
+    if runner is None:
+        raise HTTPException(503, "active backend is not available")
     _owned_video(video_id, user)
     video = store.get_video(video_id)
     if video["status"] == "processing":
@@ -1826,4 +1864,4 @@ def admin_delete_farmer(user_id: int, _: dict = Depends(require_admin)):
 # Entrypoint
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="127.0.0.1", port=PORT, reload=False)
+    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=False)

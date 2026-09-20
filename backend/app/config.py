@@ -100,12 +100,27 @@ PORT = int(os.environ.get("PORT", "8000"))
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "2048"))
 
 # CORS origins for the Next.js dev server (and prod).
+FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", "3001"))
 CORS_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
 ]
+for origin in (
+    f"http://localhost:{FRONTEND_PORT}",
+    f"http://127.0.0.1:{FRONTEND_PORT}",
+):
+    if origin not in CORS_ORIGINS:
+        CORS_ORIGINS.append(origin)
+
+# Runtime process identity. The redundancy supervisor starts one active and
+# one standby backend on separate ports.
+INSTANCE_ID = os.environ.get("OLIVE_INSTANCE_ID", "standalone").strip() or "standalone"
+INSTANCE_ROLE = os.environ.get("OLIVE_INSTANCE_ROLE", "active").strip().lower()
+if INSTANCE_ROLE not in {"active", "standby"}:
+    raise ValueError("OLIVE_INSTANCE_ROLE must be 'active' or 'standby'")
+IS_ACTIVE = INSTANCE_ROLE == "active"
 
 # How many simultaneous video processing workers.
 WORKERS = int(os.environ.get("WORKERS", "2"))
