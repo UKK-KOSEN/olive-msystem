@@ -17,7 +17,8 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TrendChart, StatePill, healthJa, healthColor } from '@/components/charts';
-import { SoilDisplay, SoilInputPanel } from '@/components/SoilComponent';
+import { SoilInputPanel } from '@/components/SoilComponent';
+import { ObservationDetail } from '@/components/ObservationDetail';
 import { UpscaledBadge } from '@/components/UpscaledBadge';
 import VideoPreview from '@/components/VideoPreview';
 import { PageHeader } from '@/components/PageHeader';
@@ -709,10 +710,10 @@ export default function Dashboard() {
               const poster = obsByVideo[v.id]?.find((o) => o.annotated_path)?.annotated_path ?? null;
               return (
               <div key={v.id} className={`card overflow-hidden ${previewId === v.id || selected === v.id ? 'ring-1 ring-olive-700/40' : ''}`}>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-3 p-3">
+                <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-12 lg:grid-cols-12">
                   <button
                     onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
-                    className="group relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-neutral-100"
+                    className="group relative h-36 w-full overflow-hidden rounded-lg bg-neutral-100 sm:col-span-3 sm:h-20 lg:col-span-2"
                     aria-label={`動画${v.filename}を再生`}
                     title="クリックでプレビュー再生"
                   >
@@ -741,32 +742,34 @@ export default function Dashboard() {
                     )}
                   </button>
 
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 sm:col-span-9 lg:col-span-7">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <button
                         onClick={() => selectVideo(v.id)}
-                        className="truncate text-sm font-semibold text-neutral-800 hover:text-olive-700 hover:underline"
+                        className="truncate text-left text-sm font-semibold text-neutral-800 hover:text-olive-700 hover:underline"
                         title="解析設定と観測結果を開く"
                       >
                         {v.filename}
                       </button>
                       <StatusBadge status={v.status} />
                     </div>
-                    <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-neutral-400">
+                    <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-neutral-400">
                       <span>{formatBytes(v.size_bytes)}</span>
                       {v.width && v.height && <span>{v.width}×{v.height}</span>}
                       {v.recorded_at && <span>撮影 {formatMeasuredAt(v.recorded_at)}</span>}
                     </p>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2 sm:col-span-12 sm:justify-end lg:col-span-3 lg:flex-col lg:items-stretch">
                     <button
+                      type="button"
                       onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
                       className="btn-secondary"
                     >
-                      {previewId === v.id ? 'プレビューを閉じる' : '動画プレビュー'}
+                      {previewId === v.id ? 'プレビューを閉じる' : 'プレビュー'}
                     </button>
                     <button
+                      type="button"
                       onClick={() => runAnalysisWithSoil(v, timeSpec[v.id])}
                       disabled={v.status === 'processing' || running === v.id}
                       className="btn-primary"
@@ -1116,31 +1119,67 @@ function AnalyseControls({
     video.duration_sec && video.duration_sec > 0
       ? `動画の長さ ${formatDuration(video.duration_sec)}。未指定なら全体を自動サンプリングします。`
       : '時間を指定してください（例: 00:00:15, 00:01:00）';
+  const [showOptions, setShowOptions] = useState(false);
+  const optionSummary = [
+    treeId?.trim() ? `樹木ID: ${treeId.trim()}` : null,
+    droneMode ? 'ドローン撮影' : null,
+    upscale ? '高解像度解析' : null,
+    soil ? '土壌水分あり' : null,
+  ].filter(Boolean);
+
   return (
-    <div className="space-y-3">
-      <div className="rounded-lg bg-neutral-50 p-4">
-        <p className="mb-2 text-sm font-medium text-neutral-700">
-          解析する時間を指定（秒または MM:SS / HH:MM:SS、カンマ区切り）
-        </p>
+    <div className="rounded-xl border border-neutral-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-neutral-800">解析フレーム</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-neutral-400">{defaultHint}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowOptions((current) => !current)}
+          aria-expanded={showOptions}
+          className="btn-ghost btn-sm shrink-0"
+        >
+          {showOptions ? 'オプションを閉じる' : '解析オプション'}
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-lg bg-neutral-50 p-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <input
             value={timeSpec}
             onChange={(e) => onTimeChange(e.target.value)}
             placeholder="例: 00:00:15, 00:01:00, 90"
+            aria-label="解析する時間"
             className="input flex-1"
           />
           <div className="flex items-center gap-2">
-            <button onClick={() => onRun()} disabled={running} className="btn-secondary">
+            <button type="button" onClick={() => onRun()} disabled={running} className="btn-secondary">
               自動サンプリング
             </button>
-            <button onClick={() => onRun(timeSpec)} disabled={running} className="btn-primary">
+            <button type="button" onClick={() => onRun(timeSpec)} disabled={running} className="btn-primary">
               {running ? '解析中…' : 'この時間で解析'}
             </button>
           </div>
         </div>
-        <p className="mt-1.5 text-xs text-neutral-400">{defaultHint}</p>
       </div>
-      <div className="mt-2.5 space-y-2">
+
+      {!showOptions && optionSummary.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {optionSummary.map((summary) => (
+            <span key={summary} className="badge bg-olive-50 text-olive-700">
+              {summary}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className={showOptions ? 'mt-4 border-t border-neutral-100 pt-4' : 'hidden'}>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm font-medium text-neutral-700">追加オプション</p>
+          <span className="text-[11px] text-neutral-400">必要なときだけ入力</span>
+        </div>
+        <div className="space-y-3">
           <input
             type="text"
             value={treeId}
@@ -1148,41 +1187,42 @@ function AnalyseControls({
             placeholder="樹木ID（例: 第3試験樹・空欄でQR自動認識）"
             className="input w-full"
           />
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-600">
-            <input
-              type="checkbox"
-              checked={droneMode ?? false}
-              onChange={(e) => {
-                onDroneModeChange(e.target.checked);
-                // Drone/aerial input is low-res: automatically enable high-resolution
-                // processing of the extracted frames, matching olive-p's behaviour.
-                if (e.target.checked && !upscale) onUpscaleChange(true);
-              }}
-              className="h-4 w-4 rounded accent-olive-600"
-            />
-            ドローン撮影（低解像度・上空からの動画）
-          </label>
-          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-violet-200 bg-violet-50/50 p-2.5 transition-colors hover:bg-violet-50">
-            <input
-              type="checkbox"
-              checked={upscale ?? false}
-              onChange={(e) => onUpscaleChange(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded accent-violet-600"
-            />
-            <span>
-              <span className="font-semibold text-violet-800">高解像度解析（4倍）</span>
-              <span className="mt-0.5 block text-[10px] leading-snug text-violet-600">
-                低解像度のフレームを4倍に高画質化してから解析します。高解像度でも精度よく検出できます（処理時間がかかります）。
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-neutral-200 bg-white p-2.5 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-300">
+              <input
+                type="checkbox"
+                checked={droneMode ?? false}
+                onChange={(e) => {
+                  onDroneModeChange(e.target.checked);
+                  if (e.target.checked && !upscale) onUpscaleChange(true);
+                }}
+                className="h-4 w-4 rounded accent-olive-600"
+              />
+              ドローン撮影
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-violet-200 bg-violet-50/50 p-2.5 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-50">
+              <input
+                type="checkbox"
+                checked={upscale ?? false}
+                onChange={(e) => onUpscaleChange(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded accent-violet-600"
+              />
+              <span>
+                <span className="font-semibold">高解像度解析（4倍）</span>
+                <span className="mt-0.5 block text-[10px] leading-snug text-violet-600">
+                  低解像度のフレームを高画質化してから解析します。
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+          </div>
+          <SoilInputPanel onChange={onSoilChange} />
+          {soil && (
+            <p className="text-xs text-neutral-500">
+              土壌水分データを添付して解析します。
+            </p>
+          )}
         </div>
-        <SoilInputPanel onChange={onSoilChange} />
-      {soil && (
-        <p className="text-xs text-neutral-500">
-          土壌水分データを添付して解析します。
-        </p>
-      )}
+      </div>
     </div>
   );
 }
@@ -1317,75 +1357,6 @@ function FrameThumb({ obs }: { obs: Observation }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={url} alt="解析画像" className="h-11 w-20 rounded-md object-cover ring-1 ring-neutral-200" />
-  );
-}
-
-function ObservationDetail({ obs }: { obs: Observation }) {
-  const r = obs.result || {};
-  const st = obs.health_state;
-  const details = r.analysis_details;
-  const stress = details?.stress || {};
-  const annotatedUrl = (r['_frame_annotated_url'] as string) || null;
-  const rawUrl = (r['_frame_raw_url'] as string) || null;
-  const soil = r.soil_moisture as SoilMoistureData | undefined;
-  const soilSource = r.soil_source as string | undefined;
-
-  return (
-    <div className="grid gap-6 md:grid-cols-2">
-      <div>
-        {obs.upscaled && (
-          <div className="mb-3"><UpscaledBadge model={obs.upscale_model} large /></div>
-        )}
-        {st && (
-          <div className="mb-3 rounded-lg border p-3 text-sm" style={{ borderColor: `${healthColor(st.label)}33`, background: `${healthColor(st.label)}0d` }}>
-            <p className="font-medium" style={{ color: healthColor(st.label) }}>
-              {healthJa(st.label)} · スコア {st.score.toFixed(3)}
-            </p>
-            <p className="mt-1 text-neutral-700">{st.message}</p>
-            {st.details && <p className="mt-1 text-xs text-neutral-500">{st.details}</p>}
-          </div>
-        )}
-        <dl className="grid grid-cols-2 gap-2.5 text-sm">
-          <DetailItem label="葉数" value={String(obs.leaf_count ?? '—')} />
-          <DetailItem label="果実" value={String(obs.fruit_count ?? '—')} />
-          <DetailItem label="緑被率" value={obs.green_coverage != null ? `${obs.green_coverage.toFixed(1)}%` : '—'} />
-          <DetailItem label="水分ストレス" value={stress.water_stress != null ? stress.water_stress.toFixed(3) : '—'} />
-          <DetailItem label="葉カール指数" value={obs.leaf_curl_index != null ? obs.leaf_curl_index.toFixed(3) : '—'} />
-          <DetailItem label="成熟度" value={r.fruit_maturity || '—'} />
-          <DetailItem label="葉ステージ" value={r.leaf_color_stage || '—'} />
-          <DetailItem label="しわ果" value={String(obs.wrinkled_fruit_count ?? 0)} />
-          <DetailItem label="全体健康スコア" value={stress.overall_health_score != null ? stress.overall_health_score.toFixed(3) : '—'} />
-          <DetailItem label="クロロフィル" value={stress.chlorophyll_proxy != null ? stress.chlorophyll_proxy.toFixed(3) : '—'} />
-        </dl>
-        <div className="mt-3">
-          <p className="label mb-1.5">土壌水分・環境</p>
-          <SoilDisplay source={soilSource} soil={soil} />
-        </div>
-      </div>
-      <div className="space-y-2">
-        {annotatedUrl && (
-          <div>
-            <p className="label mb-1">解析済み画像</p>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={annotatedUrl} alt="解析済み" className="w-full rounded-lg ring-1 ring-neutral-200" />
-          </div>
-        )}
-        {rawUrl && (
-          <a href={rawUrl} target="_blank" rel="noreferrer" className="text-sm text-olive-700 underline">
-            元フレームを開く
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DetailItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-neutral-50 px-3 py-2">
-      <dt className="text-xs text-neutral-400">{label}</dt>
-      <dd className="mt-0.5 font-medium text-neutral-800">{value}</dd>
-    </div>
   );
 }
 

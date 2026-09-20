@@ -1,10 +1,32 @@
 'use client';
 
-import { Observation } from '@/lib/api';
+import { Observation, SoilMoistureData } from '@/lib/api';
 import { HealthGauge, MetricBar } from './HealthGauge';
 import { healthJa, healthColor } from './charts';
 import { IconLeaf, IconOlive, IconActivity, IconClipboard } from './icons';
 import { UpscaledBadge } from './UpscaledBadge';
+import { SoilDisplay } from './SoilComponent';
+
+const HEALTH_HEX: Record<string, string> = {
+  happy: '#3b8a4a',
+  good: '#7a9a3a',
+  caution: '#c9972e',
+  danger: '#b8433a',
+};
+
+function riskColor(value: number): string {
+  const clamped = Math.max(0, Math.min(1, value));
+  if (clamped >= 0.65) return HEALTH_HEX.danger;
+  if (clamped >= 0.35) return HEALTH_HEX.caution;
+  return HEALTH_HEX.happy;
+}
+
+function factorColor(value: number): string {
+  const clamped = Math.max(0, Math.min(1, value));
+  if (clamped >= 0.65) return HEALTH_HEX.happy;
+  if (clamped >= 0.35) return HEALTH_HEX.caution;
+  return HEALTH_HEX.danger;
+}
 
 /**
  * Rich observation detail card showing all olive-p analysis results
@@ -31,6 +53,15 @@ export function ObservationDetail({ obs }: { obs: Observation }) {
   // Wrinkle summary from result
   const wrinkleSummary = result?.fruit_wrinkle_summary as Record<string, number> | undefined;
   const maturityBreakdown = result?.fruit_maturity_breakdown as Record<string, number> | undefined;
+  const soil = result?.soil_moisture as SoilMoistureData | undefined;
+  const soilSource = result?.soil_source as string | undefined;
+  const rawFrameUrl = result?.['_frame_raw_url'] as string | undefined;
+  const leafHealth = stress?.components?.curl_factor != null
+    ? 1 - stress.components.curl_factor
+    : (result?.leaf_curl_index != null ? 1 - result.leaf_curl_index : 0);
+  const wrinkleHealth = stress?.components?.wrinkle_factor != null
+    ? 1 - stress.components.wrinkle_factor
+    : 0;
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
@@ -86,55 +117,61 @@ export function ObservationDetail({ obs }: { obs: Observation }) {
       </div>
 
       {/* Stress indicators */}
-      <div className="px-4 pb-4 space-y-2">
-        <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">健康指標</h4>
-        <MetricBar
-          label="健康スコア"
-          value={score}
-          max={1}
-          color={color}
-        />
-        <MetricBar
-          label="水分ストレス"
-          value={stress?.water_stress ?? hs?.water_stress ?? 0}
-          max={1}
-          unit=""
-          color="#8a8a8a"
-        />
-        <MetricBar
-          label="葉反り指数"
-          value={stress?.components?.curl_factor != null ? (1 - stress.components.curl_factor) : (result?.leaf_curl_index ?? 0)}
-          max={1}
-          unit=""
-          color="#8a8a8a"
-        />
-        <MetricBar
-          label="シワ度"
-          value={stress?.components?.wrinkle_factor != null ? (1 - stress.components.wrinkle_factor) : 0}
-          max={1}
-          unit=""
-          color="#8a8a8a"
-        />
-        <MetricBar
-          label="緑度ファクター"
-          value={stress?.components?.green_coverage_factor ?? 0}
-          max={1}
-          unit=""
-          color="#8a8a8a"
-        />
-        <MetricBar
-          label="彩度ファクター"
-          value={stress?.components?.saturation_factor ?? 0}
-          max={1}
-          unit=""
-          color="#8a8a8a"
-        />
+      <div className="px-4 pb-4">
+        <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">健康指標</h4>
+        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+          <MetricBar
+            label="健康スコア"
+            value={score}
+            max={1}
+            color={color}
+          />
+          <MetricBar
+            label="水分ストレス"
+            value={stress?.water_stress ?? hs?.water_stress ?? 0}
+            max={1}
+            unit=""
+            color={riskColor(stress?.water_stress ?? hs?.water_stress ?? 0)}
+          />
+          <MetricBar
+            label="葉の健全度"
+            value={leafHealth}
+            max={1}
+            unit=""
+            color={factorColor(leafHealth)}
+          />
+          <MetricBar
+            label="果実の健全度"
+            value={wrinkleHealth}
+            max={1}
+            unit=""
+            color={factorColor(wrinkleHealth)}
+          />
+          <MetricBar
+            label="緑度ファクター"
+            value={stress?.components?.green_coverage_factor ?? 0}
+            max={1}
+            unit=""
+            color={factorColor(stress?.components?.green_coverage_factor ?? 0)}
+          />
+          <MetricBar
+            label="彩度ファクター"
+            value={stress?.components?.saturation_factor ?? 0}
+            max={1}
+            unit=""
+            color={factorColor(stress?.components?.saturation_factor ?? 0)}
+          />
+        </div>
       </div>
 
       {/* Leaf detail */}
       {leaf && (
-        <div className="px-4 pb-4">
-          <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">葉の分析</h4>
+        <details className="mx-4 mb-3 rounded-lg border border-neutral-200 bg-neutral-50/60">
+          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-xs font-semibold text-neutral-700 list-none">
+            <span>葉の分析</span>
+            <span className="text-neutral-400">▾</span>
+          </summary>
+          <div className="px-4 pb-4">
           <div className="grid grid-cols-2 gap-2 text-xs">
             <DetailItem label="色分布" value={`${leaf.color_distribution?.green_pct ?? 0}% 緑 / ${leaf.color_distribution?.yellow_pct ?? 0}% 黄`} />
             <DetailItem label="サイズ" value={`平均 ${leaf.size_distribution?.mean_area ?? 0}px`} />
@@ -144,12 +181,17 @@ export function ObservationDetail({ obs }: { obs: Observation }) {
             <DetailItem label="粗糙度" value={`${leaf.health?.roughness ?? 0}`} />
           </div>
         </div>
+      </details>
       )}
 
       {/* Fruit detail */}
       {fruit && (
-        <div className="px-4 pb-4">
-          <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">果実の分析</h4>
+        <details className="mx-4 mb-3 rounded-lg border border-neutral-200 bg-neutral-50/60">
+          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-xs font-semibold text-neutral-700 list-none">
+            <span>果実の分析</span>
+            <span className="text-neutral-400">▾</span>
+          </summary>
+          <div className="px-4 pb-4">
           <div className="grid grid-cols-2 gap-2 text-xs">
             <DetailItem label="サイズ" value={`平均 ${fruit.size_distribution?.mean_area ?? 0}px`} />
             <DetailItem label="色の均一性" value={`${fruit.color?.mean_color_consistency ?? 0}`} />
@@ -174,12 +216,17 @@ export function ObservationDetail({ obs }: { obs: Observation }) {
             )}
           </div>
         </div>
+      </details>
       )}
 
       {/* Canopy */}
       {canopy && (
-        <div className="px-4 pb-4">
-          <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">樹冠分析</h4>
+        <details className="mx-4 mb-3 rounded-lg border border-neutral-200 bg-neutral-50/60">
+          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-xs font-semibold text-neutral-700 list-none">
+            <span>樹冠分析</span>
+            <span className="text-neutral-400">▾</span>
+          </summary>
+          <div className="px-4 pb-4">
           <div className="grid grid-cols-2 gap-2 text-xs">
             <DetailItem label="被覆率" value={`${canopy.fullness_pct ?? 0}%`} />
             <DetailItem label="光貫通率" value={`${canopy.light_penetration_ratio ?? 0}`} />
@@ -191,6 +238,22 @@ export function ObservationDetail({ obs }: { obs: Observation }) {
               />
             )}
           </div>
+        </div>
+      </details>
+      )}
+
+      {soil && (
+        <div className="mx-4 mb-3">
+          <p className="mb-2 text-xs font-semibold text-neutral-500 uppercase tracking-wide">土壌水分・環境</p>
+          <SoilDisplay source={soilSource} soil={soil} compact />
+        </div>
+      )}
+
+      {rawFrameUrl && (
+        <div className="mx-4 mb-3">
+          <a href={rawFrameUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-olive-700 hover:underline">
+            元フレームを開く
+          </a>
         </div>
       )}
 
