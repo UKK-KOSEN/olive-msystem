@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from fastapi import Header, HTTPException, Depends
 
+from .config import DB_PATH, IS_ACTIVE
 from .storage import Store
 
-_store = Store()
+_store = Store(DB_PATH, initialize_schema=IS_ACTIVE, read_only=not IS_ACTIVE)
 
 
 def get_store() -> Store:

@@ -22,6 +22,7 @@
 | 通知 | 管理者から全ユーザー/特定ユーザーへ通知配信、未読バッジ |
 | 土壌水分センサー | 外部API（小豆島フィールド）から土壌水分・温度・湿度を取得して表示 |
 | センサー異常監視・通知 | データ停止・水分値異常・API接続エラーを検知し、アプリ内＋Webhook/LINE で通知 |
+| アクティブ/スタンバイ冗長運用 | バックエンドを主・待機の2プロセスで起動し、主系障害時に主ポートで後継activeを起動 |
 | 農家アカウント | 農家は自分のデータのみ閲覧。管理者は全農家のデータ・アカウントを管理 |
 
 ## 構成
@@ -47,7 +48,7 @@ olive-msystem/
 │   ├── uploads/         # アップロードされた動画・画像（元ファイル）
 │   ├── storage/         # 解析済みフレーム・注釈付き画像
 │   └── config/          # settings.json / soil_moisture.yaml
-├── ops/                # 運用スクリプト（backup / monitor / start-monitor）
+├── ops/                # 運用スクリプト（backup / monitor / redundant-*）
 ├── docs/               # ドキュメント（architecture / api / operations / farm-map / sensor-alerts 等）
 └── frontend/           Next.js 14（App Router）+ Tailwind CSS v3
     ├── app/
@@ -63,7 +64,7 @@ olive-msystem/
   `src/runtime.py`（`Analyzer`）と `src/video_processor.py`（`VideoProcessor`）を
   `backend/app/analyzer.py` からインポートしてそのまま流用。
 - フロントの `/api` `/storage` `/media` は `next.config.mjs` の rewrites で
-  FastAPI（`127.0.0.1:8000`）へプロキシ（ブラウザは同一オリジンのみ通信）。
+  FastAPI（既定値 `127.0.0.1:8000`、`BACKEND_URL` で変更可）へプロキシ。
 - `/versions`（旧ページ）は `/algorithm` へ恒久リダイレクト。
 
 ## 体調の判定
@@ -115,7 +116,12 @@ npm run start -- -p 3001
 - `ops\start-monitor.bat` … `ops\monitor.ps1` を起動（`/api/health` を30秒間隔で
   監視し、バックエンドが落ちたら自動復旧。ログは `logs\monitor.log`）
 - `ops\backup.bat` … `ops\backup.py` でDBとデータを一貫バックアップ
-  （`backups\<日時>\` へ。`python ops\backup.py --keep 10` で世代数を指定）
+  （`backups\<日時>\` へ。`python ops\backup.py --keep 10 --verify` で整合性確認）
+- `ops\redundant-monitor.ps1` … active/standbyのヘルス監視、再起動、昇格
+- `ops\redundant-start.bat` … 主系（8000）と待機系（8001）を起動し、主系障害時に主ポートで後継activeを起動
+- `ops\redundant-stop.bat` … 冗長構成のバックエンド2ノードとフロントエンドを停止
+
+待機系はAPIの書き込みを拒否し、解析キューとセンサー監視スレッドを起動しません。SQLiteとローカルファイルは同一ホスト内で共有されるため、この構成はプロセス障害向けの冗長化です。ホスト障害にも対応するには、外部DBと共有ストレージへ移行してください。
 
 詳細は [docs/operations.md](docs/operations.md) を参照してください。
 

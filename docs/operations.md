@@ -1,17 +1,15 @@
 # 運用・保守 (operations)
 
-バックエンド（FastAPI, 8000）/ フロントエンド（Next.js, 3001）の起動、監視、
-バックアップ、ログの運用方法です。
+バックエンド（FastAPI）とフロントエンド（Next.js）の起動、監視、冗長化、バックアップ、ログの運用方法です。
 
-## 起動と watchdog 自動再起動
+## 単一構成の起動と watchdog
 
-`start.bat`（または個別のバッチ）で起動できます。どちらも**二重起動防止**付きで、
-プロセスが死んだら短い待機後に自動再起動します。
+`start.bat` は1つのバックエンド（既定値 `127.0.0.1:8000`）と1つのフロントエンド（既定値 `3001`）を起動し、各プロセスを自動再起動します。
 
 | スクリプト | 起動するもの |
 |------------|--------------|
-| `run_backend.bat` | `uvicorn app.main:app --host 127.0.0.1 --port 8000`（ログは `logs/backend-uvicorn.log`） |
-| `run_frontend.bat` | `next start -p 3001`（ログは `logs/frontend.log`） |
+| `run_backend.bat` | `uvicorn app.main:app`（ログは `logs/backend-uvicorn.log`） |
+| `run_frontend.bat` | `next start`（ログは `logs/frontend.log`） |
 
 初回の手動構築:
 
@@ -21,63 +19,111 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 cd ..\frontend
 npm install
-npm run build      # next start の前に必ず最新化
+npm run build
 ```
 
-## 死活監視・自動復旧 (`ops/monitor.ps1`)
+`BACKEND_HOST`、`BACKEND_PORT`、`FRONTEND_PORT`、`BACKEND_URL` を設定するとポートとAPIプロキシ先を変更できます。
 
-`ops/start-monitor.bat` で起動すると、`http://127.0.0.1:8000/api/health` を
-30秒間隔でポーリングします。
+## アクティブ/スタンバイ冗長構成
 
-- バックエンドが応答しない（HTTP 200以外 / 例外）とき、`run_backend.bat` を
-  起動して自動復旧を試みます。
-- 復旧・異常は `logs/monitor.log` に記録されます。
-- 後付けの冗長化（watchdog）であり、`run_backend.bat` 自身の再起動ループと
-  組み合わせてダブルガードになります。
+`ops\redundant-start.bat` は、次の構成を起動します。
 
-```powershell
-.\ops\start-monitor.bat        # 起動
-Get-Content logs\monitor.log   # 稼働確認
+- active バックエンド: `http://127.0.0.1:8000`
+- standby バックエンド: `http://127.0.0.1:8001`
+- フロントエンド: `http://localhost:3001`
+- 監視アービター: `logs\redundant-monitor.log`
+
+```bat
+ops\redundant-start.bat
 ```
 
-## バックアップ (`ops/backup.py` / `ops/backup.bat`)
+`BACKEND_PORT`、`STANDBY_PORT`、`FRONTEND_PORT` を設定するとポートを変更できます。`FRONTEND_PORT` に応じて `BACKEND_URL` も必要に応じて設定してください。
 
-SQLite を WAL 配下で安全にオンライン一貫バックアップし、`config` / `uploads` /
-`storage` をコピーします。
+| 変数 | 既定値 | 説明 |
+|------|--------|------|
+| `OLIVE_INSTANCE_ID` | `standalone` | プロセス識別子。冗長構成では `primary` / `standby` などを指定 |
+| `OLIVE_INSTANCE_ROLE` | `active` | `active` または `standby`。変更後は再起動が必要 |
+| `HEALTH_FAILURE_THRESHOLD` | `3` | フェイルオーバー前の連続失敗回数 |
+| `BACKEND_HOST` | `127.0.0.1` | バックエンドのバインド先 |
+| `BACKEND_PORT` | `8000` | primary バックエンドのポート |
+| `STANDBY_PORT` | `8001` | standby バックエンドのポート |
+| `FRONTEND_PORT` | `3001` | フロントエンドのポート |
+| `BACKEND_URL` | primary URL | Next.js のAPIプロキシ先 |
 
-```powershell
-.\ops\backup.bat                 # 既定（保持5世代）でバックアップ
-python ops\backup.py --keep 10   # 保持10世代
-python ops\backup.py --out C:\backups\olive
+```bat
+set BACKEND_PORT=8100
+set STANDBY_PORT=8101
+set FRONTEND_PORT=3101
+set BACKEND_URL=http://127.0.0.1:8100
+ops\redundant-start.bat
 ```
 
-- 出力先: `backups\<YYYYMMDD_HHMM>\\`（`logs/backup.log` に結果を記録）
-- SQLite は `VACUUM INTO` 相当の sqlite backup API で、稼働中にコピーしても
-  一貫性が保証されます。
+監視アービターは active の `/api/health` を既定で10秒間隔で確認します。active が `HEALTH_FAILURE_THRESHOLD`（既定値3）回連続で到達不能またはDB利用不可になった場合、standby の `/api/health` の `can_promote`（DB読み取り可否）を確認し、primaryポートに新しい active プロセスを起動します。復旧後に元のポート構成へ自動でロールバックしません。保守時に構成を再整列する場合は一旦停止して再起動してください。
 
-## ログ
+停止は次のとおりです。
 
-| ファイル | 内容 |
-|----------|------|
-| `logs/backend.log` | アプリケーションログ（ローテーション、5MB×3）。例外トレース含む |
-| `logs/backend-uvicorn.log` | uvicorn の標準出力（watchdog 起動時） |
-| `logs/frontend.log` | Next.js の出力 |
-| `logs/monitor.log` | 死活監視・自動復旧イベント |
-| `logs/backup.log` | バックアップ結果 |
+```bat
+ops\redundant-stop.bat
+```
+
+停止スクリプトは監視アービター、フロントエンド、両バックエンドを停止します。
+
+### standby の動作
+
+- `GET`、`HEAD`、`OPTIONS` 以外のAPIを `503 Service Unavailable` で拒否します。
+- 解析キュー（Runner）、センサー監視スレッド、admin初期化を実行しません。
+- SQLiteをread-only接続で開き、起動時のスキーマ変更を実行しません。
+- active への移行は、監視アービターが primary ポートに新しい `active` プロセスを起動することで実行します。
+
+SQLite（WAL）と `backend/data/`、`backend/uploads/`、`backend/storage/` は同一ホスト上で共有されます。この構成はバックエンドプロセス障害を対象としており、ホスト障害・ディスク障害・ネットワーク分割には対応しません。真正のホスト冗長化には、PostgreSQL等の外部DBとSMB/S3等の共有ストレージへ移行してください。
 
 ## ヘルスチェック
 
 ```powershell
 curl http://127.0.0.1:8000/api/health
-# {"status":"ok","service":"olive-msystem-backend","db_status":"ok","uptime_sec":…,"timestamp":"…"}
+curl http://127.0.0.1:8000/api/health/ready
+curl http://127.0.0.1:8001/api/health
 ```
 
-`status` は DB が読み取れる場合は `ok`、読めなければ `degraded` を返します。
+`/api/health` はliveness用で、DB読み取り結果を `db_status` と `can_promote` に記録します。`/api/health/ready` は active かつDB利用可能の場合だけ200を返し、standbyまたはDB異常時は503を返します。
+
+## 単一構成の死活監視
+
+`ops\start-monitor.bat` は `ops\monitor.ps1` を起動し、`/api/health` を30秒間隔で監視します。冗長構成では `ops\redundant-start.bat` を使用してください。
+
+## バックアップ
+
+`ops\backup.bat` は、SQLiteのオンラインバックアップAPIでDBをコピーし、`config` と `uploads` を `backups\<日時>\` へ保存します。
+
+```bat
+ops\backup.bat
+```
+
+世代数や追加オプションはPythonスクリプトで指定できます。
+
+```powershell
+py ops\backup.py --keep 10
+py ops\backup.py --include-storage --verify --keep 10
+py ops\backup.py --out C:\backups\olive
+```
+
+`--verify` はコピー後のDBへ `PRAGMA integrity_check` を実行します。検査結果が `ok` でない場合は終了コード1を返します。
+
+## ログ
+
+| ファイル | 内容 |
+|----------|------|
+| `logs/backend.log` | アプリケーションログ（ローテーション、5MB×3） |
+| `logs/backend-uvicorn.log` | uvicornの標準出力 |
+| `logs/frontend.log` | Next.jsの出力 |
+| `logs/monitor.log` | 単一構成の死活監視イベント |
+| `logs/redundant-monitor.log` | active/standbyの監視・再起動・昇格イベント |
+| `logs/backup.log` | バックアップ結果 |
 
 ## 管理者パスワード
 
 - 初回起動時に `admin` がランダムな10桁の数字パスワードで自動生成され、起動ログに表示されます。
-- 固定したい場合は環境変数 `ADMIN_PASSWORD` を設定（この場合はランダム化されません）。
+- 固定したい場合は環境変数 `ADMIN_PASSWORD` を設定してください。
 - 旧デフォルトの `admin123` は初回起動時に自動ローテーションされます。
 
 ## センサー監視の確認
@@ -89,12 +135,7 @@ curl http://127.0.0.1:8000/api/health
 
 ## トラブルシューティング
 
-- **センサーのデータが来ない** → `GET /api/soil-moisture/status` の
-  `source` と `data_age_hours` を確認。`source=error` ならキー/URL/ネットワーク、
-  age が大きいならセンサー本体の電源・通信を確認。
-- **通知が来ない** → `alerts.enabled` と各チャネル設定、`logs/backend.log` の
-  "sensor alert" ログを確認。テスト送信を実行。
-- **DB が肥大化** → `ops/backup.bat` 後に不要なら、管理画面のデータ削除、
-  または安全な場所で `PRAGMA wal_checkpoint(TRUNCATE)` / `VACUUM` を実施。
-- **起動直後に何度も通知** → 再通知ではなく過去の履歴追加の可能性。
-  `sensor_alert_state` の `level`/`last_sent_at` を確認（重複抑制はDB永続）。
+- **standbyが起動しない**: `logs/redundant-monitor.log` と `logs/backend-standby-uvicorn.log` を確認し、DBが存在するか、`OLIVE_INSTANCE_ROLE=standby` が競合していないか確認してください。
+- **フェイルオーバーしない**: active の `db_status`、standby の `can_promote`、`HEALTH_FAILURE_THRESHOLD` と監視ログを確認してください。
+- **フロントエンドがactiveに接続できない**: `BACKEND_URL` がprimaryポートを指しているか、`npm run build` を再実行して `next start` を再起動してください。
+- **DBが肥大化**: バックアップ後に、安全な場所で `PRAGMA wal_checkpoint(TRUNCATE)` または `VACUUM` を検討してください。

@@ -9,7 +9,11 @@ rem  (crash) it restarts after a short delay. The
 rem  single-instance guard prevents double startup.
 rem ============================================
 
-set PORT=8000
+if not defined BACKEND_PORT if defined PORT set BACKEND_PORT=%PORT%
+if not defined BACKEND_PORT set BACKEND_PORT=8000
+if not defined BACKEND_HOST if defined HOST set BACKEND_HOST=%HOST%
+if not defined BACKEND_HOST set BACKEND_HOST=127.0.0.1
+set PORT=%BACKEND_PORT%
 
 :check
 netstat -ano | findstr /R /C:":%PORT% .*LISTENING" >nul 2>&1
@@ -22,7 +26,7 @@ goto check
 echo [watchdog] Starting backend (uvicorn on %PORT%)...
 if not exist logs mkdir logs
 pushd backend
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port %PORT% >> ..\logs\backend-uvicorn.log 2>&1
+.venv\Scripts\python.exe -m uvicorn app.main:app --host %BACKEND_HOST% --port %PORT% >> ..\logs\backend-uvicorn.log 2>&1
 set EXIT=%errorlevel%
 popd
 echo [watchdog] Backend exited (code %EXIT%). Restarting in 3s...
