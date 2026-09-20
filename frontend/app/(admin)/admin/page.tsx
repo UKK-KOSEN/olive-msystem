@@ -1305,7 +1305,7 @@ function FarmersOverviewSection({ obs }: { obs: Observation[] }) {
                   return (
                     <div className="mt-3">
                       <p className="mb-1 text-[11px] font-medium text-neutral-400">スコア推移</p>
-                      <TrendChart obs={farmerObs} width={440} height={150} minWidth={320} />
+                      <TrendChart obs={farmerObs} width={440} height={150} minWidth={320} showSummary={false} />
                     </div>
                   );
                 })()}

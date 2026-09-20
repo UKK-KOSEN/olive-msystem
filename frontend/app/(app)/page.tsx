@@ -582,7 +582,7 @@ export default function Dashboard() {
               </span>
             </div>
             {sortedObs.length > 0 ? (
-              <TrendChart obs={sortedObs} />
+              <TrendChart obs={sortedObs} height={320} />
             ) : isAdmin && farmerId == null ? (
               <p className="py-8 text-center text-sm text-neutral-400">
                 上の「表示する農家」を選択すると、その農家の体調スコアの推移が表示されます。

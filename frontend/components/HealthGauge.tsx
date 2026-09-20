@@ -22,10 +22,10 @@ export function HealthGauge({
   const center = size / 2;
 
   // Color based on score thresholds
-  let color = '#c25a4a'; // danger
-  if (clamped >= 0.75) color = '#4c9a5a'; // happy
-  else if (clamped >= 0.55) color = '#84a841'; // good
-  else if (clamped >= 0.35) color = '#c99a2e'; // caution
+  let color = '#b8433a'; // danger
+  if (clamped >= 0.75) color = '#3b8a4a'; // happy
+  else if (clamped >= 0.55) color = '#7a9a3a'; // good
+  else if (clamped >= 0.35) color = '#c9972e'; // caution
 
   // Japanese label
   let stateLabel = '要管理';
@@ -98,7 +98,7 @@ export function MetricBar({
   color?: string;
 }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
-  const barColor = color ?? '#4c9a5a';
+  const barColor = color ?? '#3b8a4a';
 
   return (
     <div className="flex flex-col gap-1">
