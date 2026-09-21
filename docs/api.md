@@ -46,12 +46,12 @@
 
 | メソッド・パス | 説明 |
 |----------------|------|
-| `GET /api/farm-map?target_user_id=4` | 農園マップ用データ（登録樹木＋最新状態＋座標） |
-| `GET /api/trees/registry?target_user_id=4` | 樹木台帳一覧（管理者は農家指定必須） |
-| `POST /api/trees/registry` | 樹木登録 `{target_user_id, tree_id, name, variety, row_num, col_num, note}` |
-| `PUT /api/trees/registry/{id}?target_user_id=4` | 樹木更新 |
-| `DELETE /api/trees/registry/{id}?target_user_id=4` | 樹木削除 |
-| `POST /api/trees/import` | 台帳一括登録 |
+| `GET /api/farm-map?farmer_id=4` | 農園マップ用データ（登録樹木＋最新状態＋座標） |
+| `GET /api/trees/registry?farmer_id=4` | 樹木台帳一覧（管理者は農家指定必須） |
+| `POST /api/trees/registry?farmer_id=4` | 樹木登録 `{tree_id, name, variety, row_num, col_num, note}` |
+| `PUT /api/trees/registry/{tree_id}?farmer_id=4` | 樹木更新 |
+| `DELETE /api/trees/registry/{tree_id}?farmer_id=4` | 樹木削除 |
+| `POST /api/trees/registry/import?farmer_id=4` | 観測済みの樹木IDを一括で台帳へ登録 |
 
 ## 土壌水分・センサー監視
 
@@ -87,10 +87,35 @@
 
 | メソッド・パス | 説明 |
 |----------------|------|
-| `GET /api/health` | 死活監視（認証なし）。`{status, db_status, uptime_sec}` |
+| `GET /api/health` | 死活監視（認証なし）。`status`、`db_status`、`role`、`ready`、`can_promote`、`uptime_sec` など |
+| `GET /api/health/ready` | レディネスチェック（active かつ DB 利用可能時に 200、そうでないとき 503） |
 | `GET /api/olive/status` など | 体調情報 |
 | `GET /storage/{...}` | 解析済みフレーム・注釈画像の静的配信 |
 | `GET /media/{file}` | 動画の Range 対応ストリーミング配信 |
+
+## health / ready の詳細
+
+| エンドポイント | 用途 | 認証 | レスポンス |
+|---------------|------|------|------------|
+| `GET /api/health` | liveness（プロセス生存確認） | 不要 | プロセス生存・DB状態・ロール・稼働時間など。DB異常時も通常は200 |
+| `GET /api/health/ready` | readiness（サービス提供可能確認） | 不要 | 200: active 且つ DB 利用可 / 503: standby 或いは DB 異常 |
+
+- `/api/health` は DB の読み取り結果を `db_status` に記録し、`can_promote`（DB利用可否）も返します。
+- `/api/health/ready` は active であり DB が利用可能な場合のみ 200 を返します。
+
+## UIプロキシに関する注意
+
+フロントエンド（Next.js, ポート 3001）は `frontend/next.config.mjs` の `rewrites` により、以下のパスをバックエンド（FastAPI）へプロキシします。ブラウザは同一オリジン（`localhost:3001`）のみにリクエストするため、CORS は発生しません。
+
+| フロントのパス | プロキシ先 |
+|---------------|------------|
+| `/api/*` | `BACKEND_URL/api/*`（既定: `http://127.0.0.1:8000/api/*`） |
+| `/storage/*` | `BACKEND_URL/storage/*` |
+| `/media/*` | `BACKEND_URL/media/*` |
+
+- `BACKEND_URL` は `next.config.mjs` の `process.env.BACKEND_URL` で決定されます。環境変数を変更した場合は `npm run build` を再実行して `next start` を再起動してください。
+- 旧ページ `/versions` は `/algorithm` へ恒久リダイレクト（`frontend/next.config.mjs` の `redirects`）です。
+- 開発時（`npm run dev`）は `backend/app/config.py` の `CORS_ORIGINS` により `localhost:3000` / `localhost:3001` も許可されます。
 
 ## レスポンス形式
 

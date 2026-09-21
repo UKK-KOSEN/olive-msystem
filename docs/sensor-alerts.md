@@ -185,6 +185,54 @@ LINE の公式 Messaging API を利用して、友だちのLINEユーザーに�
   その時間以上続く警告時アラートを一度だけ Critical として再通知します
   （イベント `escalate`、状態 `data.escalated=true`）。
 
+## Frontend Display（フロントエンド表示）
+
+### 通知一覧コンポーネント（`Notifications.tsx`）
+
+`frontend/components/Notifications.tsx` の `NotificationsList` コンポーネントが通知一覧を描画します。
+
+| 機能 | 実装 |
+|------|------|
+| 一覧表示 | `api.notifications()` で取得、カード形式で表示 |
+| 未読数 | `api.unreadCount()` で取得。`showBadge` を有効にした場合のみ未読バナーを表示 |
+| 既読化 | カードクリック時に `api.markNotificationRead(id)` で既読化 |
+| 送信（管理者） | お知らせを送信フォームから `api.createNotification()` で作成 |
+| 特定農家指定 | `target_role=specific` で農家一覧から選択 |
+| 削除（管理者） | 削除ボタンから `api.deleteNotification(id)` で削除 |
+| エラー表示 | `ErrorNotice` コンポーネントで接続エラーを表示・再試行 |
+
+### 通知ページ（`/notifications`）
+
+`frontend/app/(app)/notifications/page.tsx` が `NotificationsList` をラップしてページを構成します。
+
+- `PageHeader` でタイトル「お知らせ」と説明文を表示
+- `NotificationsList` はページ内で未読数も取得しますが、現在の `/notifications` ページは `showBadge` を指定していないため、未読バナーは表示されません。
+
+### データ契約（通知のデータ構造）
+
+`GET /api/notifications` および一覧表示で使用される通知のデータ構造:
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `id` | number | 通知ID |
+| `title` | string | タイトル |
+| `body` | string | 本文（プレーンテキスト、`\n` 区切り可能） |
+| `is_read` | boolean/int | 既読フラグ |
+| `created_at` | string (ISO 8601) | 作成日時 |
+| `creator_name` | string (optional) | 作成者名 |
+| `target_role` | string | `all` / `farmer` / `admin` / `specific` |
+| `target_user_id` | number (nullable) | 特定農家の場合のみ設定 |
+
+画面表示のデータフロー:
+
+```
+[NotificationsList showBadge] → api.unreadCount() → 未読バナー表示
+[NotificationsList] → api.notifications() → 通知カード一覧
+  ├─ カードクリック → markNotificationRead(id) → 既読化 + 未読数減算
+  ├─ 管理者のみ「お知らせを送信」 → createNotification() → 一覧再取得
+  └─ 管理者のみ削除 → deleteNotification(id) → 一覧再取得
+```
+
 ## よくある質問
 
 - **データはAPIには届いているのに通知が出ない**

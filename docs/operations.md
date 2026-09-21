@@ -133,9 +133,71 @@ py ops\backup.py --out C:\backups\olive
 - テスト送信: 管理画面「土壌センサー監視・通知」→「テスト通知を送信」
   （または `POST /api/admin/soil-config/test-notification`）
 
+## UI確認
+
+- フロントエンドが正しく起動しているか: http://localhost:3001 にアクセスしてログイン画面が表示されるか確認。
+- ログイン後: Sidebar のナビゲーション（体調・観測履歴・カレンダー・農園マップ・お知らせ・プロフィール・アルゴリズム・FAQ）がすべてクリック可能か確認。
+- 管理画面（admin）: `/admin` にアクセスし、単一ページ内の農家管理・データ管理・サイト設定・土壌監視セクションが表示されるか確認。
+- エラーページ: 不正な権限で `/admin` にアクセスすると `/forbidden` にリダイレクトされるか確認。
+- お知らせ: `/notifications` にアクセスし、通知一覧・未読状態・管理者の送信フォームが表示されるか確認。
+
+## ヘルスチェック
+
+```powershell
+# 死活監視（認証不要・常に200）
+curl http://127.0.0.1:8000/api/health
+
+# レディネスチェック（active かつ DB 利用可能時にのみ200）
+curl http://127.0.0.1:8000/api/health/ready
+
+# 冗長構成: standby ヘルスチェック
+curl http://127.0.0.1:8001/api/health
+
+# レスポンス例
+{"status":"ok","db_status":"ok","can_promote":true,"uptime_sec":1234.56}
+```
+
+| 項目 | 確認方法 |
+|------|----------|
+| プロセス生存 | `GET /api/health` が 200 を返すか |
+| DB接続 | `/api/health` の `db_status` が `ok` か |
+| アクティブ起動 | `/api/health/ready` が 200 を返すか |
+| standby 異常 | `GET /api/health/ready`（standby ポート）が 503 を返すか確認（期待通り） |
+| フェイルオーバー後 | standby の `can_promote` が `true` で、active がダウンした際に `/api/health/ready` が 200 になるか |
+
+## アクティブ/スタンバイ（詳細）
+
+| 項目 | active | standby |
+|------|--------|---------|
+| ポート | `BACKEND_PORT`（既定 8000） | `STANDBY_PORT`（既定 8001） |
+| 書き込みAPI | 許可 | `503 Service Unavailable` で拒否 |
+| Runner（解析キュー） | 実行 | 停止 |
+| センサー監視スレッド | 実行 | 停止 |
+| admin初期化 | 実行 | 停止 |
+| SQLite 接続 | 読み書き | read-only |
+| `GET /api/health/ready` | 200（DB利用可の場合） | 503 |
+| `can_promote` | — | standby の DB読み取り可否 |
+
+## バックアップ確認
+
+バックアップ完了後に以下で確認できます:
+
+```powershell
+# バックアップディレクトリ一覧
+ls backups\
+
+# DB整合性確認（--verify の結果を再確認）
+python -c "import sqlite3; c=sqlite3.connect('backups\<timestamp>\olive_msystem.db'); print(c.execute('PRAGMA integrity_check').fetchone())"
+```
+
+- `--verify` オプション付きでバックアップ実行した場合、コピー後のDBに対して `PRAGMA integrity_check` が実行され、結果が `ok` でない場合は終了コード1で失敗します。
+- バックアップには `backups\<日時>\` ディレクトリに DB と config、uploads が保存されます。`--include-storage` を指定した場合のみ解析済みフレームの `storage` も保存されます。
+
 ## トラブルシューティング
 
 - **standbyが起動しない**: `logs/redundant-monitor.log` と `logs/backend-standby-uvicorn.log` を確認し、DBが存在するか、`OLIVE_INSTANCE_ROLE=standby` が競合していないか確認してください。
 - **フェイルオーバーしない**: active の `db_status`、standby の `can_promote`、`HEALTH_FAILURE_THRESHOLD` と監視ログを確認してください。
 - **フロントエンドがactiveに接続できない**: `BACKEND_URL` がprimaryポートを指しているか、`npm run build` を再実行して `next start` を再起動してください。
 - **DBが肥大化**: バックアップ後に、安全な場所で `PRAGMA wal_checkpoint(TRUNCATE)` または `VACUUM` を検討してください。
+- **UIにバックエンドの状態が反映されない**: `BackendStatusBanner` が表示するステータスを確認。`/api/health` のレスポンスと `BACKEND_URL` 等の環境変数を確認してください。
+- **お知らせが表示されない**: `GET /api/notifications` で通知データを確認し、`target_role` / `target_user_id` の設定を確認してください。

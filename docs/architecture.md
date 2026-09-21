@@ -58,7 +58,7 @@ DB は WAL モードで運用しており、稼働中のバックアップ（`op
 
 - JWT（`Authorization: Bearer <token>`）。トークンは `POST /api/auth/login` で取得。
 - ロール:
-  - **farmer**: 原則自分のデータのみ取得・編集。`?target_user_id` 等は管理者のみ。
+  - **farmer**: 原則自分のデータのみ取得・編集。通知の `target_user_id` や樹木APIの `farmer_id` など、管理者向けスコープ指定は権限制約に従います。
   - **admin**: `/api/admin/*` と `/admin` ページへアクセス可能。
 - アクセス制御は `auth.py` の `get_current_user` / `require_admin` で行う。
 
@@ -66,7 +66,7 @@ DB は WAL モードで運用しており、稼働中のバックアップ（`op
 
 1. `store.add_notification(title, body, created_by, target_role, target_user_id)` で `notifications` に挿入。
 2. 一覧API `GET /api/notifications` はロール/ユーザーでフィルタして返却。
-3. フロントは未読数をヘッダーのベルアイコンで表示し、クリックで `/notifications` へ。
+3. フロントは `NotificationsList` で通知一覧と未読数を取得し、`showBadge` を有効化した場合に未読バナーを表示します。
 
 センサー異常の通知（`sensor_alerts.py`）はこの通知テーブル（アプリ内チャネル）と
 Webhook（LINE Notify / Slack 等）の両方へ一貫して送信します。
@@ -113,7 +113,7 @@ app/
 ```
 
 - API 呼び出しは `lib/api.ts` に集約（型定義＋fetchラッパー）。
-- 認証状態は `lib/auth.ts`、サイトブランドは `lib/site.ts` で管理。
+- 認証状態は `lib/auth.tsx`、サイトブランドは `lib/site.tsx` で管理。
 
 ## データ保存先
 
@@ -125,6 +125,82 @@ app/
 | アプリ設定 | `backend/config/settings.json` |
 | 土壌水分センサー設定 | `backend/config/soil_moisture.yaml`（APIキー含む＝コミット禁止） |
 | ログ | `logs/`（backend.log / backend-uvicorn.log / frontend.log / monitor.log / redundant-monitor.log / backup.log） |
+
+## UI/UX構成
+
+フロントエンドの画面構成とナビゲーションは以下のとおりです。
+
+### レイアウト要素
+
+| 要素 | コンポーネント | 設置場所 | 説明 |
+|------|----------------|----------|------|
+| サイドバー（農家向け） | `frontend/components/Sidebar.tsx` | 左側固定 | 農家向けページへのナビゲーション（体調、観測、カレンダー、マップ、お知らせ、プロフィール、アルゴリズム、FAQ） |
+| サイドバー（管理者向け） | `frontend/components/AdminSidebar.tsx` | 左側固定 | 管理ダッシュボードとシステム構成へのナビゲーション |
+| タスクバー | `frontend/components/TaskBar.tsx` | 右下固定 | 動画・画像解析ジョブの進捗と完了・エラー状態 |
+| バックエンド状態バナー | `frontend/components/BackendStatusBanner.tsx` | 右上固定 | バックエンド接続障害時の復旧導線 |
+| エラー通知 | `frontend/components/ErrorNotice.tsx` | 各ページ | 取得エラーの表示と再試行 |
+| ページヘッダー | `frontend/components/PageHeader.tsx` | 各ページ上部 | タイトルと説明文 |
+| スナックバー | `frontend/components/Snackbar.tsx` | 各ページ | 一時的な操作結果通知 |
+| 健康ゲージ | `frontend/components/HealthGauge.tsx` | `/olive`、観測詳細、`FarmerHome` | 体調スコアの円形表示 |
+| 高精細バッジ | `frontend/components/UpscaledBadge.tsx` | 解析結果 | 高精細アップスケール適用済み表示 |
+
+### 認証とルーティング
+
+- `/login` と `/forbidden` は認証・権限ゲート外の公開ページ。農家登録は `/login` の「農家登録」モードから利用します。
+- `(app)` 配下は `app/(app)/layout.tsx` が認証チェックを行い、未認証なら `/login` へリダイレクト。
+- `(admin)` 配下は `app/(admin)/layout.tsx` が認証＋管理者ロールチェックを行い、無効なら `/forbidden` へリダイレクト。
+- 読み込み中は各 layout でスピナー表示（`aria-busy`, `aria-live="polite"` 対応）。
+
+### ナビゲーション導線
+
+```
+/login → ログイン/農家登録
+        ↓（認証後）
+/app layout → Sidebar + TaskBar + BackendStatusBanner
+  ├─ /              ダッシュボード（アップロード/解析/プレビュー/土壌状態）
+  ├─ /olive         オリーブ体調キャラクター
+  ├─ /images        画像解析
+  ├─ /tracking      観測履歴・トレンド（?tree= で絞り込み）
+  ├─ /calendar      カレンダー
+  ├─ /farm-map      農園マップ
+  ├─ /notifications お知らせ一覧（未読バナーは任意）
+  ├─ /profile       プロフィール・設定
+  ├─ /algorithm     仕組み説明・構成・バージョン（旧 /versions → リダイレクト）
+  ├─ /faq           FAQ
+  └─ /forbidden     403 アクセス禁止
+
+/admin layout → AdminSidebar + BackendStatusBanner
+  └─ /admin         管理ダッシュボード（農家・データ・設定・土壌監視の各セクション）
+```
+
+### レスポンシブ対応
+
+- サイドバーは画面幅に応じて展開/折りたたみ。
+- マップ・表・カード類は `grid`, `flex`, `overflow-x-auto` でレスポンシブ対応。
+- 農園マップの SVG は `viewBox` で `w-full h-auto` により幅適応。
+
+## Documentation Index（ドキュメントとUIルート・コードの対応表）
+
+| UIルート | ドキュメント | 主なコードファイル | 説明 |
+|----------|-------------|-------------------|------|
+| `/login` | （本README） | `frontend/app/login/page.tsx`, `frontend/lib/auth.tsx` | ログイン・農家登録 |
+| `/` | README（ダッシュボード） | `frontend/app/(app)/page.tsx` | ダッシュボード（アップロード/解析/プレビュー/土壌状態） |
+| `/olive` | README（体調確認） | `frontend/app/(app)/olive/page.tsx` | オリーブ体調キャラクター |
+| `/images` | README（画像解析） | `frontend/app/(app)/images/page.tsx` | 画像解析 |
+| `/tracking` | README（観測履歴） | `frontend/app/(app)/tracking/page.tsx`, `frontend/components/ObservationDetail.tsx` | 観測履歴・トレンド |
+| `/calendar` | README（カレンダー） | `frontend/app/(app)/calendar/page.tsx` | カレンダー |
+| `/farm-map` | [docs/farm-map.md](farm-map.md) | `frontend/app/(app)/farm-map/page.tsx` | 農園マップと樹木台帳 |
+| `/notifications` | [docs/sensor-alerts.md](sensor-alerts.md) | `frontend/components/Notifications.tsx`, `frontend/app/(app)/notifications/page.tsx` | アプリ内通知（`showBadge` 有効時は未読バナー） |
+| `/profile` | README（プロフィール） | `frontend/app/(app)/profile/page.tsx` | プロフィール・表示設定 |
+| `/algorithm` | README（アルゴリズム） | `frontend/app/(app)/algorithm/page.tsx` | 仕組み説明・構成 |
+| `/faq` | README（FAQ） | `frontend/app/(app)/faq/page.tsx` | よくある質問 |
+| `/admin` | [docs/api.md](api.md), [docs/operations.md](operations.md) | `frontend/app/(admin)/admin/page.tsx`, `frontend/components/AdminSidebar.tsx` | 管理ダッシュボード（単一ルート内のセクション構成） |
+| `/forbidden` | （エラーページ） | `frontend/app/forbidden/page.tsx` | 403 アクセス禁止 |
+| `/api/health` | [docs/api.md](api.md) | `backend/app/health.py` | 死活監視 |
+| `/api/health/ready` | [docs/api.md](api.md) | `backend/app/health.py` | レディネスチェック |
+| 全API | [docs/api.md](api.md) | `backend/app/main.py`, `frontend/lib/api.ts` | APIリファレンス |
+| 冗長構成 | [docs/operations.md](operations.md) | `ops/redundant-monitor.ps1`, `ops/monitor.ps1` | active/standby 監視・フェイルオーバー |
+| バックアップ | [docs/operations.md](operations.md) | `ops/backup.py` | SQLiteオンラインバックアップ |
 
 ## 冗長化・運用
 

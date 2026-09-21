@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { PageHeader } from '@/components/PageHeader';
 import ErrorNotice from '@/components/ErrorNotice';
+import { Snackbar } from '@/components/Snackbar';
 
 const OLIVE_VARIETIES = ['ルッカ', 'マンザニロ', 'ミッション', 'ネバディロ・ブランコ', 'アルベキーナ', 'コロネイキ', 'フラントイオ', 'ホホリンレ'];
 
@@ -21,7 +22,7 @@ export default function ProfilePage() {
   const [confirm, setConfirm] = useState('');
   const [canSeeOthers, setCanSeeOthers] = useState(!!user?.preferences?.can_see_others);
   const [error, setError] = useState<string | null>(null);
-  const [snackbar, setSnackbar] = useState<string | null>(null);
+  const [snackbar, setSnackbar] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
   const [saving, setSaving] = useState(false);
 
   const saveProfile = async (e: React.FormEvent) => {
@@ -61,10 +62,10 @@ export default function ProfilePage() {
       await refresh();
       setPassword('');
       setConfirm('');
-      setSnackbar('設定を保存しました');
-      setTimeout(() => setSnackbar(null), 3000);
+      setSnackbar({ message: '設定を保存しました', kind: 'ok' });
     } catch (e: any) {
       setError(e.message || '保存に失敗しました');
+      setSnackbar({ message: e.message || '保存に失敗しました', kind: 'err' });
     } finally {
       setSaving(false);
     }
@@ -87,9 +88,7 @@ export default function ProfilePage() {
         </div>
       )}
       {snackbar && (
-        <div className="mb-4 rounded-lg border border-olive-200 bg-olive-50 px-4 py-3 text-sm text-olive-800">
-          ✓ {snackbar}
-        </div>
+        <Snackbar message={snackbar.message} kind={snackbar.kind} onClose={() => setSnackbar(null)} />
       )}
 
       <form onSubmit={saveProfile} className="space-y-6">

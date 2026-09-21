@@ -23,6 +23,7 @@ import { healthJa, healthColor, TrendChart } from '@/components/charts';
 import { IconOlive } from '@/components/icons';
 import ErrorNotice from '@/components/ErrorNotice';
 import VideoPreview from '@/components/VideoPreview';
+import { Snackbar } from '@/components/Snackbar';
 
 function fmtBytes(bytes: number | null | undefined): string {
   if (!bytes) return '—';
@@ -59,7 +60,7 @@ export default function AdminPage() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [images, setImages] = useState<ImageAsset[]>([]);
   const [obs, setObs] = useState<Observation[]>([]);
-const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [snackbar, setSnackbar] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
@@ -84,8 +85,7 @@ const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | nu
   }, [loadAll]);
 
   const flash = (kind: 'ok' | 'err', text: string) => {
-    setMessage({ kind, text });
-    setTimeout(() => setMessage(null), 4000);
+    setSnackbar({ kind, message: text });
   };
 
   if (user && user.role !== 'admin') {
@@ -138,16 +138,8 @@ if (!stats) {
         </p>
       </header>
 
-      {message && (
-        <div
-          className={`mb-4 rounded-lg px-3 py-2 text-sm ${
-            message.kind === 'ok'
-              ? 'bg-health-good/10 text-health-good'
-              : 'bg-health-danger/10 text-health-danger'
-          }`}
-        >
-          {message.text}
-        </div>
+      {snackbar && (
+        <Snackbar message={snackbar.message} kind={snackbar.kind} onClose={() => setSnackbar(null)} />
       )}
 
       {/* system stats */}
@@ -1305,7 +1297,7 @@ function FarmersOverviewSection({ obs }: { obs: Observation[] }) {
                   return (
                     <div className="mt-3">
                       <p className="mb-1 text-[11px] font-medium text-neutral-400">スコア推移</p>
-                      <TrendChart obs={farmerObs} width={440} height={150} minWidth={320} />
+                      <TrendChart obs={farmerObs} width={440} height={150} minWidth={320} showSummary={false} />
                     </div>
                   );
                 })()}
