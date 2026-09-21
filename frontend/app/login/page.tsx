@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { useSite } from '@/lib/site';
 import { IconOlive } from '@/components/icons';
+import { Snackbar } from '@/components/Snackbar';
 
 type Mode = 'login' | 'register';
 
@@ -18,8 +19,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [farmName, setFarmName] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [snackbar, setSnackbar] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
 
   const go = (user: { role: string }) => {
     router.replace(user.role === 'admin' ? '/admin' : '/');
@@ -27,7 +28,6 @@ export default function LoginPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
     setBusy(true);
     try {
       if (mode === 'login') {
@@ -35,7 +35,7 @@ export default function LoginPage() {
         go(user);
       } else {
         if (password.length < 6) {
-          setError('パスワードは6文字以上にしてください。');
+          setSnackbar({ message: 'パスワードは6文字以上にしてください。', kind: 'err' });
           setBusy(false);
           return;
         }
@@ -48,10 +48,15 @@ export default function LoginPage() {
         go(user);
       }
     } catch (err: any) {
-      setError(err?.message || 'エラーが発生しました。');
+      setSnackbar({ message: err?.message || 'エラーが発生しました。', kind: 'err' });
     } finally {
       setBusy(false);
     }
+  };
+
+  const switchMode = (newMode: Mode) => {
+    setMode(newMode);
+    setSnackbar(null);
   };
 
   return (
@@ -71,41 +76,53 @@ export default function LoginPage() {
         </div>
 
         <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 grid grid-cols-2 gap-1 rounded-lg bg-neutral-100 p-1">
+          <div className="mb-5 grid grid-cols-2 gap-1 rounded-lg bg-neutral-100 p-1" role="tablist" aria-label="認証モード">
             <button
-              onClick={() => { setMode('login'); setError(null); }}
+              onClick={() => switchMode('login')}
+              role="tab"
+              aria-selected={mode === 'login'}
+              aria-controls="login-panel"
+              id="login-tab"
               className={`rounded-md py-2 text-sm font-medium transition-colors ${mode === 'login' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500'}`}
             >
               ログイン
             </button>
             <button
-              onClick={() => { setMode('register'); setError(null); }}
+              onClick={() => switchMode('register')}
+              role="tab"
+              aria-selected={mode === 'register'}
+              aria-controls="register-panel"
+              id="register-tab"
               className={`rounded-md py-2 text-sm font-medium transition-colors ${mode === 'register' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500'}`}
             >
               農家登録
             </button>
           </div>
 
-          <form onSubmit={submit} className="space-y-4">
-            {error && (
-              <p className="rounded-md bg-health-danger/10 px-3 py-2 text-xs text-health-danger">{error}</p>
-            )}
+          {snackbar && (
+            <Snackbar message={snackbar.message} kind={snackbar.kind} onClose={() => setSnackbar(null)} />
+          )}
 
+          <form onSubmit={submit} className="space-y-4" role="tabpanel" id={mode === 'login' ? 'login-panel' : 'register-panel'} aria-labelledby={mode === 'login' ? 'login-tab' : 'register-tab'}>
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-600">ユーザー名</label>
+              <label htmlFor="username" className="mb-1 block text-xs font-medium text-neutral-600">ユーザー名</label>
               <input
+                id="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 autoComplete="username"
                 placeholder="ユーザー名"
                 className="input w-full px-3 py-2.5 text-sm"
+                aria-describedby={mode === 'login' ? 'username-hint' : undefined}
               />
+              {mode === 'login' && <p id="username-hint" className="mt-1 text-xs text-neutral-400">登録済みのユーザー名を入力してください</p>}
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-600">パスワード</label>
+              <label htmlFor="password" className="mb-1 block text-xs font-medium text-neutral-600">パスワード</label>
               <input
+                id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -113,14 +130,17 @@ export default function LoginPage() {
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 placeholder="パスワード"
                 className="input w-full px-3 py-2.5 text-sm"
+                aria-describedby={mode === 'register' ? 'password-hint' : undefined}
               />
+              {mode === 'register' && <p id="password-hint" className="mt-1 text-xs text-neutral-400">6文字以上で入力してください</p>}
             </div>
 
             {mode === 'register' && (
               <>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-neutral-600">表示名（任意）</label>
+                  <label htmlFor="displayName" className="mb-1 block text-xs font-medium text-neutral-600">表示名（任意）</label>
                   <input
+                    id="displayName"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="例: 田中 太郎"
@@ -128,8 +148,9 @@ export default function LoginPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-neutral-600">農園名（任意）</label>
+                  <label htmlFor="farmName" className="mb-1 block text-xs font-medium text-neutral-600">農園名（任意）</label>
                   <input
+                    id="farmName"
                     value={farmName}
                     onChange={(e) => setFarmName(e.target.value)}
                     placeholder="例: 小豆島第1農園"

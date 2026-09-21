@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { api, FarmMapTree, FarmTreeRecord, FarmerRecord } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { healthColor, healthJa } from '@/components/charts';
-import ErrorNotice from '@/components/ErrorNotice';
+import { Snackbar } from '@/components/Snackbar';
 
 const HEALTH_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
 const MAP_COLS = 8;
@@ -21,12 +21,11 @@ export default function FarmMapPage() {
   const [data, setData] = useState<{ map: { width: number; height: number }; trees: FarmMapTree[]; registered_count: number; unregistered_count: number; farmer?: { id: number; farm_name?: string | null; display_name?: string | null } | null } | null>(null);
   const [registry, setRegistry] = useState<FarmTreeRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
   const [busy, setBusy] = useState(false);
+  const [snackbar, setSnackbar] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
 
   const farmerParam = useMemo(
     () => (isAdmin ? (farmerId != null ? farmerId : undefined) : undefined),
@@ -37,14 +36,13 @@ export default function FarmMapPage() {
     (fid: number | null) => {
       const sc = isAdmin ? (fid ?? undefined) : undefined;
       setLoading(true);
-      setError(null);
       setSelected(null);
       Promise.all([api.farmMap(sc), api.listFarmTrees(sc)])
         .then(([m, r]) => {
           setData(m);
           setRegistry(r.trees);
         })
-        .catch((e: any) => setError(e?.message || '農園マップの取得に失敗しました'))
+        .catch((e: any) => setSnackbar({ message: e?.message || '農園マップの取得に失敗しました', kind: 'err' }))
         .finally(() => setLoading(false));
     },
     [isAdmin]
@@ -109,14 +107,12 @@ export default function FarmMapPage() {
 
   const handleImport = async () => {
     setBusy(true);
-    setInfo(null);
-    setError(null);
     try {
       const r = await api.importFarmTrees(farmerParam);
-      setInfo(`観測済みの木から ${r.count} 本を自動登録しました。`);
+      setSnackbar({ message: `観測済みの木から ${r.count} 本を自動登録しました。`, kind: 'ok' });
       load(farmerId);
     } catch (e: any) {
-      setError(e?.message || '自動登録に失敗しました');
+      setSnackbar({ message: e?.message || '自動登録に失敗しました', kind: 'err' });
     } finally {
       setBusy(false);
     }
@@ -125,14 +121,13 @@ export default function FarmMapPage() {
   const handleDelete = async (tree_id: string) => {
     if (!window.confirm(`樹木「${tree_id}」を台帳から削除しますか？（観測データは残ります）`)) return;
     setBusy(true);
-    setError(null);
     try {
       await api.deleteFarmTree(tree_id, farmerParam);
-      setInfo(`樹木「${tree_id}」を削除しました。`);
+      setSnackbar({ message: `樹木「${tree_id}」を削除しました。`, kind: 'ok' });
       setSelected(null);
       load(farmerId);
     } catch (e: any) {
-      setError(e?.message || '削除に失敗しました');
+      setSnackbar({ message: e?.message || '削除に失敗しました', kind: 'err' });
     } finally {
       setBusy(false);
     }
@@ -229,17 +224,16 @@ export default function FarmMapPage() {
         <SummaryCard label="最終観測" value={latestObserved(data?.trees)} color="#555" />
       </section>
 
-      {info && (
-        <div className="mt-3 rounded-lg bg-olive-50 px-3 py-2.5 text-sm text-olive-800">{info}</div>
+      {snackbar && (
+        <Snackbar message={snackbar.message} kind={snackbar.kind} onClose={() => setSnackbar(null)} />
       )}
-      <ErrorNotice message={error} onRetry={() => load(farmerId)} />
 
       {loading ? (
-        <div className="grid place-items-center rounded-xl border border-neutral-200 bg-white py-24 text-sm text-neutral-400">
+        <div className="grid place-items-center rounded-xl border border-neutral-200 bg-white py-24 text-sm text-neutral-400" role="status" aria-live="polite" aria-busy="true">
           読み込み中…
         </div>
       ) : !data || data.trees.length === 0 ? (
-        <div className="rounded-xl border border-neutral-200 bg-white p-10 text-center">
+        <div className="rounded-xl border border-neutral-200 bg-white p-10 text-center" role="status" aria-live="polite">
           <p className="text-sm font-medium text-neutral-700">この農家にはまだ樹木がありません</p>
           <p className="mt-2 text-sm text-neutral-500">
             「観測済みの木を自動登録」で実績から登録するか、動画・画像解析時に「樹木ID」を入力するとその木がマップに現れます。
@@ -403,8 +397,14 @@ function TreeNode({
 }) {
   const color = t.state ? healthColor(t.state.label) : '#cccccc';
   const label = t.name || t.tree_id;
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onSelect(t.tree_id);
+    }
+  };
   return (
-    <g role="button" aria-label={`樹木 ${t.tree_id}`}>
+    <g role="button" tabIndex={0} aria-label={`樹木 ${t.tree_id}`} onKeyDown={handleKeyDown}>
       <circle
         cx={t.x}
         cy={t.y}
@@ -472,45 +472,45 @@ function TreeDetail({
 }) {
   if (!tree) {
     return (
-      <div className="mt-4 rounded-xl border border-dashed border-neutral-300 bg-white/60 p-5 text-center text-sm text-neutral-400">
-        マップ上の樹木をクリックすると、その木の詳細がここに表示されます。
+      <div className="mt-4 rounded-xl border border-dashed border-neutral-300 bg-white/60 p-5 text-center text-sm text-neutral-400" role="status" aria-live="polite">
+        マップ上の樹木をクリックまたはEnterキーで選択すると、その木の詳細がここに表示されます。
       </div>
     );
   }
   const state = tree.state;
   const name = tree.name || reg?.name;
   return (
-    <div className="mt-4 rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
+    <div className="mt-4 rounded-xl border border-neutral-200 bg-white p-4 sm:p-5 shadow-sm" role="region" aria-label={`樹木 ${tree.tree_id} の詳細`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="inline-block h-4 w-4 rounded-full" style={{ background: state ? healthColor(state.label) : '#cccccc' }} />
-          <h2 className="text-lg font-bold text-neutral-800">{tree.tree_id}</h2>
-          {name && name !== tree.tree_id && <span className="text-sm text-neutral-500">{name}</span>}
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 min-w-0">
+          <span className="inline-block h-4 w-4 rounded-full shrink-0" style={{ background: state ? healthColor(state.label) : '#cccccc' }} aria-hidden="true" />
+          <h2 className="text-lg font-bold text-neutral-800 truncate">{tree.tree_id}</h2>
+          {name && name !== tree.tree_id && <span className="text-sm text-neutral-500 truncate">{name}</span>}
           {state ? (
             <span
-              className="rounded-full px-3 py-1 text-sm font-bold"
+              className="rounded-full px-3 py-1 text-sm font-bold shrink-0"
               style={{ background: healthColor(state.label) + '22', color: healthColor(state.label) }}
             >
               {healthJa(state.label)} · {Math.round(state.score * 100)}点
             </span>
           ) : (
-            <span className="rounded-full bg-neutral-100 px-3 py-1 text-sm font-bold text-neutral-500">未観測</span>
+            <span className="rounded-full bg-neutral-100 px-3 py-1 text-sm font-bold text-neutral-500 shrink-0">未観測</span>
           )}
           {tree.registered ? (
-            <span className="rounded-full bg-olive-100 px-3 py-1 text-xs font-bold text-olive-700">登録済み</span>
+            <span className="rounded-full bg-olive-100 px-3 py-1 text-xs font-bold text-olive-700 shrink-0">登録済み</span>
           ) : (
-            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">未登録</span>
+            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700 shrink-0">未登録</span>
           )}
         </div>
         <button
           type="button"
           onClick={onClear}
-          className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs text-neutral-600 transition-colors hover:bg-neutral-50"
+          className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs text-neutral-600 transition-colors hover:bg-neutral-50 shrink-0"
         >
           選択を解除
         </button>
       </div>
-      <div className="mt-4 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
         <div>
           <p className="text-xs text-neutral-500">配置（畝・列）</p>
           <p className="mt-1 font-medium text-neutral-700">

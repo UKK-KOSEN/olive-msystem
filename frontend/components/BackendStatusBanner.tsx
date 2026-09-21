@@ -31,7 +31,8 @@ export default function BackendStatusBanner() {
   return (
     <div
       role="alert"
-      className="fixed bottom-4 right-4 z-[100] max-w-sm rounded-xl border border-red-300 bg-red-50 px-4 py-3 shadow-lg"
+      aria-live="assertive"
+      className="fixed top-4 right-4 z-[100] max-w-sm rounded-xl border border-red-300 bg-red-50 px-4 py-3 shadow-lg"
     >
       <p className="text-sm font-semibold text-red-700">バックエンドに接続できません</p>
       <p className="mt-1 text-xs leading-relaxed text-red-600">
@@ -45,7 +46,7 @@ export default function BackendStatusBanner() {
             setOffline(!ok);
           });
         }}
-        className="mt-2 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100"
+        className="mt-2 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1"
       >
         再確認
       </button>

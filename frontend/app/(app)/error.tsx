@@ -14,7 +14,7 @@ export default function AppError({
   }, [error]);
 
   return (
-    <div className="grid min-h-[60vh] place-items-center px-4">
+    <div className="grid min-h-[60vh] place-items-center px-4" aria-live="assertive" role="alert">
       <div className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-8 text-center shadow-sm">
         <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-health-danger/10 text-2xl">
           ⚠️
@@ -25,12 +25,14 @@ export default function AppError({
         </p>
         <div className="mt-6 flex justify-center gap-2">
           <button
+            type="button"
             onClick={() => reset()}
             className="btn-primary"
           >
             再読み込み
           </button>
           <button
+            type="button"
             onClick={() => { window.location.href = '/'; }}
             className="btn-secondary"
           >

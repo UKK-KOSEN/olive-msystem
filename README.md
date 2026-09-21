@@ -19,7 +19,7 @@
 | 動画プレビュー再生 | Range 対応ストリーミング（`/media`）でブラウザの `<video>` 再生・シーク対応 |
 | カレンダー・推移 | 観測履歴をカレンダー/グラフで閲覧、トレンド判定 |
 | 農園マップ | 樹木台帳（レジストリ）で畝・列に樹木を配置し、体調を地図上に色分け表示 |
-| 通知 | 管理者から全ユーザー/特定ユーザーへ通知配信、未読バッジ |
+| 通知 | 管理者から全ユーザー/特定ユーザーへ通知配信、通知一覧 |
 | 土壌水分センサー | 外部API（小豆島フィールド）から土壌水分・温度・湿度を取得して表示 |
 | センサー異常監視・通知 | データ停止・水分値異常・API接続エラーを検知し、アプリ内＋Webhook/LINE で通知 |
 | アクティブ/スタンバイ冗長運用 | バックエンドを主・待機の2プロセスで起動し、主系障害時に主ポートで後継activeを起動 |
@@ -78,40 +78,119 @@ olive-msystem/
 | >= 0.35 | caution | 心配 | 水分・葉の状態に注意 |
 | それ以外 | danger | ぐったり | 早めに潅水や環境の見直し |
 
-## 起動手順
+## Getting Started（クイックスタート）
 
-### 1. バックエンド（FastAPI, ポート 8000）
+1. **初回セットアップ**: `start.bat` を実行すると、Python仮想環境とnpmパッケージが自動インストールされます。続けて `cd frontend && npm run build` を実行してください（`start.bat` のフロントエンドは `next start` を使用します）。
+2. **アクセス**: ブラウザで http://localhost:3001 を開いてください。
+3. **ログイン**: 管理者は初回起動時にランダムな10桁数字パスワードで作成されます（ログ確認 or `ADMIN_PASSWORD` 環境変数で固定）。
+
+## 開発起動
+
+### 方法A: 一括起動（推奨）
 
 ```powershell
-cd backend
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+start.bat
 ```
 
-### 2. フロントエンド（Next.js, ポート 3001）
+バックエンドとフロントエンドの watchdog が自動で起動・監視します。
+
+### 方法B: 手動起動
 
 ```powershell
+# バックエンド（別ターミナル）
+cd backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# フロントエンド（別ターミナル）
 cd frontend
 npm install
-npm run build          # 本番ビルド（起動スクリプト利用時は必須）
-npm run start -- -p 3001
+npm run dev -- -p 3001
 ```
 
-開発中は `npm run dev -- -p 3001` でも起動できます。
+### 方法C: 冗長構成（active/standby）
 
-ブラウザで http://localhost:3001 を開いてください。
+```powershell
+ops\redundant-start.bat
+```
 
-### 一括起動（watchdog付き）
+- active: `127.0.0.1:8000` / standby: `127.0.0.1:8001` / frontend: `localhost:3001`
+- `ops\redundant-monitor.ps1` がヘルスを監視し、active 障害時に standby を昇格させます。
 
-`start.bat` をダブルクリック、またはコマンドラインで実行すると
-バックエンドとフロントエンドをまとめて起動します。
+## 環境変数
 
-- `run_backend.bat` … uvicorn（8000）を監視・自動再起動
-- `run_frontend.bat` … `next start -p 3001` を監視・自動再起動
-- どちらも二重起動防止（既に起動中なら監視のみ）
+| 変数 | 既定値 | 説明 |
+|------|--------|------|
+| `BACKEND_HOST` | `127.0.0.1` | バックエンドのバインド先ホスト |
+| `BACKEND_PORT` | `8000` | バックエンドのポート |
+| `FRONTEND_PORT` | `3001` | フロントエンドのポート |
+| `BACKEND_URL` | `http://127.0.0.1:8000` | Next.js の API プロキシ先（`next.config.mjs` rewrites） |
+| `ADMIN_PASSWORD` | （ランダム10桁） | 管理者パスワードの固定（未設定時は初回起動時にランダム生成） |
+| `OLIVE_INSTANCE_ID` | `standalone` | 冗長構成でのプロセス識別子（`primary` / `standby` 等） |
+| `OLIVE_INSTANCE_ROLE` | `active` | 冗長構成でのロール（`active` / `standby`） |
+| `HEALTH_FAILURE_THRESHOLD` | `3` | フェイルオーバー前の連続失敗回数 |
+| `STANDBY_PORT` | `8001` | standby バックエンドのポート（冗長構成時） |
 
-### 運用スクリプト
+## フロント・バックエンドのポートとプロキシ
+
+| 層 | ポート | アクセス元 |
+|----|--------|------------|
+| フロントエンド（Next.js） | 3001 | ブラウザ（http://localhost:3001） |
+| バックエンド（FastAPI） | 8000 | フロントエンドのプロキシ経由 |
+| standby バックエンド | 8001 | ヘルスチェック専用（書き込み拒否） |
+
+### プロキシ構成
+
+`frontend/next.config.mjs` の `rewrites` により、フロントエンドからの以下のパスがバックエンドへプロキシされます：
+
+| フロントのパス | プロキシ先 |
+|---------------|------------|
+| `/api/*` | `BACKEND_URL/api/*` |
+| `/storage/*` | `BACKEND_URL/storage/*` |
+| `/media/*` | `BACKEND_URL/media/*` |
+
+- `/versions`（旧ページ）は `/algorithm` へ恒久リダイレクト。
+- 開発中は CORS により `localhost:3000` / `localhost:3001` も許可されます（`backend/app/config.py` の `CORS_ORIGINS`）。
+
+## 検証コマンド
+
+```powershell
+# バックエンド ヘルスチェック（認証なし）
+curl http://127.0.0.1:8000/api/health
+
+# バックエンド レディネスチェック（active かつ DB 利用可能時に 200）
+curl http://127.0.0.1:8000/api/health/ready
+
+# 冗長構成: standby ヘルスチェック
+curl http://127.0.0.1:8001/api/health
+
+# API 認証テスト（JWT トークンが必要）
+$token = (curl http://127.0.0.1:8000/api/auth/login -Method POST -Body '{"username":"admin","password":"xxx"}' -ContentType 'application/json' | ConvertFrom-Json).token
+curl http://127.0.0.1:8000/api/auth/me -H "Authorization: Bearer $token"
+
+# フロントエンド アクセス確認
+curl http://localhost:3001
+```
+
+## 主要UI導線
+
+| 導線 | ルート | 説明 |
+|------|--------|------|
+| ログイン → ダッシュボード | `/login` → `/` | ログイン後にダッシュボードへ |
+| ダッシュボード → 解析実行 | `/` → 動画アップロード → 解析実行 | 動画アップロードと解析の実行 |
+| 体調確認 | `/olive` | オリーブキャラクターの体調スコアと状態 |
+| 観測履歴 | `/tracking` | 観測記録の一覧・絞り込み・エクスポート |
+| カレンダー | `/calendar` | 日別の体調をカレンダーで閲覧 |
+| 農園マップ | `/farm-map` | 樹木台帳と体調の地図表示 |
+| お知らせ | `/notifications` | 通知一覧 |
+| プロフィール | `/profile` | 農園情報・パスワード・設定 |
+| アルゴリズム | `/algorithm` | 検出アルゴリズム・システム構成 |
+| FAQ | `/faq` | よくある質問 |
+| 管理画面 | `/admin` | 管理者向け（農家管理・データ・設定） |
+| エラーページ | `/forbidden` | 403 アクセス禁止 |
+
+Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により、農家向けページへの導線が提供されます。管理者向けには `AdminSidebar.tsx` を使用します。
+
+## 運用スクリプト
 
 - `ops\start-monitor.bat` … `ops\monitor.ps1` を起動（`/api/health` を30秒間隔で
   監視し、バックエンドが落ちたら自動復旧。ログは `logs\monitor.log`）
@@ -168,9 +247,9 @@ npm run start -- -p 3001
 
 ### 認証 (`/api/auth`)
 
-- `POST /login` … JWTトークン取得
-- `POST /register` … 新規ユーザー登録（農家）
-- `GET /me`, `PUT /profile`, `GET/PUT /preferences` … 自身の情報
+- `POST /api/auth/login` … JWTトークン取得
+- `POST /api/auth/register` … 新規ユーザー登録（農家）
+- `GET /api/auth/me`, `PUT /api/auth/profile`, `GET/PUT /api/auth/preferences` … 自身の情報
 
 ### 動画 (`/api/videos`)
 
@@ -198,8 +277,9 @@ npm run start -- -p 3001
 - `GET /api/olive/status` … 体調ステータス（最新判定・推移）
 - `GET /api/calendar/observations` … カレンダー用データ
 - `GET /api/trees` … 樹木ID一覧（追跡用）
-- `GET /api/farm-map?target_user_id=4` … 農園マップ用データ（登録樹木＋最新の体調＋座標）
-- `GET /api/trees/registry?target_user_id=4` ／ `POST` ／ `PUT /{id}` ／ `DELETE /{id}` … 樹木台帳CRUD（管理者は農家指定必須）
+- `GET /api/farm-map?farmer_id=4` … 農園マップ用データ（登録樹木＋最新の体調＋座標）
+- `GET /api/trees/registry?farmer_id=4` ／ `POST /api/trees/registry?farmer_id=4` ／ `PUT /api/trees/registry/{tree_id}?farmer_id=4` ／ `DELETE /api/trees/registry/{tree_id}?farmer_id=4` … 樹木台帳CRUD（管理者は農家指定必須）
+- `POST /api/trees/registry/import?farmer_id=4` … 観測済みの樹木IDを一括で台帳へ登録
 
 ### 土壌水分・センサー監視
 
@@ -212,7 +292,8 @@ npm run start -- -p 3001
 
 - `GET /api/notifications` `/unread-count` `/read` … 通知
 - `GET /api/admin/stats` `/farmers` `/settings` … 管理者API（要admin権限）
-- `GET /api/health` … 死活監視用（認証なし）
+- `GET /api/health` … 死活監視用（認証なし、DB状態とロールを含む）
+- `GET /api/health/ready` … レディネス監視用（active 且つDB利用可能な場合のみ200）
 
 ### 静的ファイル
 
@@ -226,7 +307,7 @@ npm run start -- -p 3001
 
 - 台帳は農家ごとに管理（`user_id` + `tree_id` で一意）。管理画面の樹木台帳テーブルで
   登録・編集・削除、一括importが可能。**管理者は対象農家を指定**します。
-- 台帳に未登録でも観測にある樹木は自動で空きセルに配置され、ワンクリックで台帳に登録できます。
+- 台帳に未登録でも観測にある樹木は自動的に空きセルへ配置されます。ノードを選択して詳細パネルを開き、「樹木を登録」から台帳へ登録できます。
 - 樹木クリックで観測回数・最終観測・状態メッセージ、`/tracking?tree=` への遷移ができます。
 - 動作確認用サンプル: `backend/tools/assign_sample_tree_ids.py`（未設定観測へ `A-01`〜 を付与。
   実解析で入力済みのIDは上書きしません）

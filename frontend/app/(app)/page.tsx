@@ -37,6 +37,7 @@ import {
   IconSparkle,
   IconChevronRight,
 } from '@/components/icons';
+import { Snackbar } from '@/components/Snackbar';
 
 function actionGuidance(st: HealthState): string {
   let advice = '';
@@ -97,6 +98,8 @@ export default function Dashboard() {
   const [previewId, setPreviewId] = useState<number | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
+  const [snackbar, setSnackbar] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
 
   const loadVideos = useCallback(async () => {
     try {
@@ -199,8 +202,10 @@ export default function Dashboard() {
         await api.upload(f);
       }
       await loadVideos();
+      setSnackbar({ message: `${files.length} 件の動画をアップロードしました`, kind: 'ok' });
     } catch (e: any) {
       setUploadError(e.message || 'アップロードに失敗しました');
+      setSnackbar({ message: e.message || 'アップロードに失敗しました', kind: 'err' });
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -211,6 +216,13 @@ export default function Dashboard() {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length) handleFiles(files);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInputRef.current?.click();
+    }
   };
 
   const runAnalysis = async (video: Video, customTimes?: string, soil?: SoilMoistureInput,
@@ -534,6 +546,10 @@ export default function Dashboard() {
         <SoilStatusCard status={soilStatus} />
       )}
 
+      {snackbar && (
+        <Snackbar message={snackbar.message} kind={snackbar.kind} onClose={() => setSnackbar(null)} />
+      )}
+
       <div className="grid gap-6 lg:grid-cols-5">
         {/* left: upload + trend */}
         <div className="space-y-6 lg:col-span-3">
@@ -541,18 +557,30 @@ export default function Dashboard() {
           <section className="card">
             <h2 className="label mb-3">動画を追加</h2>
             <div
+              ref={dropZoneRef}
               onDragOver={(e) => e.preventDefault()}
               onDrop={onDrop}
               onClick={() => fileInputRef.current?.click()}
-              className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-6 py-10 text-center transition-colors hover:border-neutral-400 hover:bg-neutral-100/60"
+              onKeyDown={onKeyDown}
+              tabIndex={0}
+              role="button"
+              aria-label="動画をアップロード"
+              aria-describedby="video-upload-desc"
+              className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-6 py-10 text-center transition-colors hover:border-neutral-400 hover:bg-neutral-100/60 focus:outline-none focus:ring-2 focus:ring-olive-500 focus:ring-offset-2"
             >
               <IconVideo size={30} className="text-neutral-400" />
               <p className="text-sm font-medium text-neutral-700">
-                {uploading ? 'アップロード中…' : 'クリックまたはドラッグして動画を追加'}
+                {uploading ? 'アップロード中…' : 'クリック、ドラッグ、または Enter キーで動画を追加'}
               </p>
-              <p className="text-xs text-neutral-400">
-                複数ファイル対応（MP4 / AVI / MOV / MKV など）
+              <p id="video-upload-desc" className="text-xs text-neutral-400">
+                複数ファイル対応（MP4 / AVI / MOV / MKV など）最大 500MB まで
               </p>
+              {uploading && (
+                <div className="flex items-center gap-2 text-xs text-neutral-500" role="status" aria-live="polite">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-olive-600 border-t-transparent" />
+                  アップロードしています…
+                </div>
+              )}
               <input
                 ref={fileInputRef}
                 type="file"

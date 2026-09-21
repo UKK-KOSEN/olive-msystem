@@ -13,14 +13,16 @@ export default function ErrorNotice({
   return (
     <div
       role="alert"
-      className={`mt-3 flex items-start justify-between gap-3 rounded-lg bg-health-danger/10 px-3 py-2.5 text-sm text-health-danger ${className}`}
+      aria-live="assertive"
+      className={`mt-3 flex items-start justify-between gap-3 rounded-lg border border-health-danger/20 bg-health-danger/10 px-3 py-2.5 text-sm text-health-danger ${className}`}
     >
-      <p className="min-w-0 leading-relaxed">{message}</p>
+      <p className="min-w-0 flex-1 leading-relaxed">{message}</p>
       {onRetry && (
         <button
           type="button"
           onClick={onRetry}
-          className="shrink-0 rounded-md border border-health-danger/30 bg-white px-2.5 py-1 text-xs font-medium text-health-danger transition-colors hover:bg-health-danger/10"
+          className="shrink-0 rounded-md border border-health-danger/40 bg-health-danger px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-health-danger/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-health-danger focus-visible:ring-offset-1"
+          aria-label="再試行"
         >
           再試行
         </button>

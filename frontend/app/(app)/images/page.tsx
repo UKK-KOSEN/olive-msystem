@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import ErrorNotice from '@/components/ErrorNotice';
 import { IconImage } from '@/components/icons';
+import { Snackbar } from '@/components/Snackbar';
 
 function StatusBadge({ status }: { status: ImageAsset['status'] }) {
   const map: Record<string, { label: string; cls: string }> = {
@@ -45,9 +46,11 @@ export default function ImageAnalysisPage() {
   const [removing, setRemoving] = useState<number | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ImageAsset | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
   const [elapsed, setElapsed] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | ImageAsset['status']>('all');
+  const [snackbar, setSnackbar] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
 
   const statusOrder: { key: 'all' | ImageAsset['status']; label: string }[] = [
     { key: 'all', label: 'すべて' },
@@ -94,8 +97,10 @@ export default function ImageAnalysisPage() {
         await api.uploadImage(f);
       }
       await load();
+      setSnackbar({ message: `${files.length} 件の画像をアップロードしました`, kind: 'ok' });
     } catch (e: any) {
       setUploadError(e.message || 'アップロードに失敗しました');
+      setSnackbar({ message: e.message || 'アップロードに失敗しました', kind: 'err' });
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -109,8 +114,10 @@ export default function ImageAnalysisPage() {
       if (expanded === img.id) setExpanded(null);
       setConfirmRemove(null);
       await load();
+      setSnackbar({ message: '画像を削除しました', kind: 'ok' });
     } catch (e: any) {
       setError(e.message || '削除に失敗しました');
+      setSnackbar({ message: e.message || '削除に失敗しました', kind: 'err' });
     } finally {
       setRemoving(null);
     }
@@ -120,6 +127,13 @@ export default function ImageAnalysisPage() {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length) handleFiles(files);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInputRef.current?.click();
+    }
   };
 
   const runImage = async (img: ImageAsset, soil?: SoilMoistureInput, treeId?: string, droneMode = false, upscale = false) => {
@@ -160,16 +174,30 @@ export default function ImageAnalysisPage() {
       <section className="card mb-6">
         <h2 className="label mb-3">画像を追加</h2>
         <div
+          ref={dropZoneRef}
           onDragOver={(e) => e.preventDefault()}
           onDrop={onDrop}
           onClick={() => fileInputRef.current?.click()}
-          className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-6 py-10 text-center transition-colors hover:border-neutral-400 hover:bg-neutral-100/60"
+          onKeyDown={onKeyDown}
+          tabIndex={0}
+          role="button"
+          aria-label="画像をアップロード"
+          aria-describedby="upload-desc"
+          className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-6 py-10 text-center transition-colors hover:border-neutral-400 hover:bg-neutral-100/60 focus:outline-none focus:ring-2 focus:ring-olive-500 focus:ring-offset-2"
         >
           <IconImage size={30} className="text-neutral-400" />
           <p className="text-sm font-medium text-neutral-700">
-            {uploading ? 'アップロード中…' : 'クリックまたはドラッグして画像を追加'}
+            {uploading ? 'アップロード中…' : 'クリック、ドラッグ、または Enter キーで画像を追加'}
           </p>
-          <p className="text-xs text-neutral-400">複数ファイル対応（JPG / PNG / BMP / TIFF / WebP）</p>
+          <p id="upload-desc" className="text-xs text-neutral-400">
+            複数ファイル対応（JPG / PNG / BMP / TIFF / WebP）最大 50MB まで
+          </p>
+          {uploading && (
+            <div className="flex items-center gap-2 text-xs text-neutral-500" role="status" aria-live="polite">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-olive-600 border-t-transparent" />
+              アップロードしています…
+            </div>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -186,6 +214,10 @@ export default function ImageAnalysisPage() {
           <ErrorNotice message={uploadError || error} />
         )}
       </section>
+
+      {snackbar && (
+        <Snackbar message={snackbar.message} kind={snackbar.kind} onClose={() => setSnackbar(null)} />
+      )}
 
       {loadError && (
         <ErrorNotice message={loadError} onRetry={load} />
@@ -215,13 +247,22 @@ export default function ImageAnalysisPage() {
         </div>
 
         {shown.length === 0 ? (
-          <div className="empty-state">
-            <IconImage size={36} className="text-neutral-300" />
+          <div className="empty-state" role="status" aria-live="polite">
+            <IconImage size={36} className="text-neutral-300" aria-hidden="true" />
             <p className="empty-title">
               {images.length === 0 ? 'まだ画像がありません' : `「${statusOrder.find((f) => f.key === statusFilter)?.label}」の画像はありません`}
             </p>
             {images.length === 0 && (
               <p className="empty-desc">上の領域から画像を追加してください。</p>
+            )}
+            {images.length > 0 && (
+              <button
+                onClick={() => setStatusFilter('all')}
+                className="mt-3 btn-secondary btn-sm"
+                aria-label="すべての画像を表示"
+              >
+                すべての画像を表示
+              </button>
             )}
           </div>
         ) : (
