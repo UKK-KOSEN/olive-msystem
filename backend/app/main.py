@@ -98,8 +98,10 @@ except Exception:
 def health():
     """Liveness probe for the ops monitor / load balancer (no auth)."""
     counts = {}
+    db_ok = False
     try:
         counts = store.count()
+        db_ok = True
     except Exception:
         db_ok = False
     return {
