@@ -41,7 +41,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -128,7 +128,7 @@ class SoilMoistureFetcher:
             req = urllib.request.Request(url, headers=headers, method="GET")
             try:
                 self._req_count += 1
-                self._last_req_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                self._last_req_at = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     self._cache[key] = (time.time(), data)
@@ -139,7 +139,7 @@ class SoilMoistureFetcher:
                     time.sleep(min(wait, 10))
                     continue
                 self._err_count += 1
-                self._last_err_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                self._last_err_at = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
                 self._last_err_msg = f"HTTP {e.code}: {e.reason}"
                 raise RuntimeError(f"API error {e.code}: {e.reason}") from e
             except urllib.error.URLError as e:
@@ -147,7 +147,7 @@ class SoilMoistureFetcher:
                     time.sleep(0.5)
                     continue
                 self._err_count += 1
-                self._last_err_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                self._last_err_at = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
                 self._last_err_msg = f"Network: {e.reason}"
                 raise RuntimeError(f"Network error: {e.reason}") from e
         raise RuntimeError("soil moisture API request failed")

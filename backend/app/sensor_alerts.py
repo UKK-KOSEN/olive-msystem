@@ -33,7 +33,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import yaml
@@ -295,7 +295,7 @@ def evaluate() -> dict:
     if measured:
         ts = _sm._parse_api_ts(measured)
         if ts:
-            now = datetime.utcnow().replace(tzinfo=ts.tzinfo) if ts.tzinfo else datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=ts.tzinfo) if ts.tzinfo else datetime.now(timezone.utc)
             age_hours = (now - ts).total_seconds() / 3600.0
 
     s1 = sm.get("sensor1_moisture_percent")

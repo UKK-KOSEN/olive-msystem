@@ -8,8 +8,10 @@ import hashlib
 import hmac
 import json
 import secrets
+import shutil
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -19,6 +21,18 @@ from .config import DB_PATH, STORAGE_DIR
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _rmtree_retry(path: Path, attempts: int = 3, delay: float = 0.3) -> None:
+    """Remove a directory tree, retrying on transient OSError (e.g. Windows locks)."""
+    for i in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except OSError:
+            if i == attempts - 1:
+                return
+            time.sleep(delay)
 
 
 _PBKDF2_ITER = 200_000
@@ -968,16 +982,19 @@ class Store:
 
     # ---- deletes (admin) --------------------------------------------------
     def delete_video(self, video_id: int) -> Optional[str]:
-        """Delete a video and its observations. Returns its storage folder."""
+        """Delete a video and its observations. Returns its storage path."""
         with self._lock:
             con = self._connect()
             try:
                 row = con.execute("SELECT storage_path FROM videos WHERE id = ?", (video_id,)).fetchone()
                 if not row:
                     return None
+                out = STORAGE_DIR / str(video_id)
                 con.execute("DELETE FROM observations WHERE video_id = ?", (video_id,))
                 con.execute("DELETE FROM videos WHERE id = ?", (video_id,))
                 con.commit()
+                if out.is_dir():
+                    _rmtree_retry(out)
                 return row["storage_path"]
             finally:
                 con.close()
@@ -994,12 +1011,8 @@ class Store:
                 con.execute("DELETE FROM observations WHERE image_id = ?", (image_id,))
                 con.execute("DELETE FROM images WHERE id = ?", (image_id,))
                 con.commit()
-                try:
-                    if out.is_dir():
-                        import shutil
-                        shutil.rmtree(out)
-                except OSError:
-                    pass
+                if out.is_dir():
+                    _rmtree_retry(out)
                 return row["storage_path"]
             finally:
                 con.close()

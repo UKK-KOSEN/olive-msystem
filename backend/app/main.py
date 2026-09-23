@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-import shutil
 import time
 import traceback
 import uvicorn
@@ -132,6 +131,7 @@ def health_ready():
 
 # ---- Sensor anomaly monitor (background thread) ---------------------------
 import threading
+from datetime import datetime as _dt, timezone as _tz
 from .sensor_alerts import run_monitor as _sensor_alerts_run
 from .sensor_alerts import load_alerts_config as _alerts_cfg
 
@@ -691,6 +691,22 @@ def _owned_video(video_id: int, user: dict) -> dict:
     return video
 
 
+def _unlink_upload(absolute_path: Optional[str]) -> None:
+    """Delete a single uploaded file that was stored directly under UPLOAD_DIR.
+
+    Videos/images are saved as ``UPLOAD_DIR/<filename>`` (no per-row folder),
+    so we must only remove the file itself — never the directory.
+    """
+    if not absolute_path:
+        return
+    try:
+        p = Path(absolute_path)
+        if p.is_file():
+            p.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 @app.post("/api/images/{image_id}/analyse")
 def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(get_current_user)):
     """Analyse a single uploaded image (synchronous, single image)."""
@@ -807,8 +823,7 @@ def soil_moisture_status():
     if measured:
         ts = _parse_api_ts(measured)
         if ts:
-            from datetime import datetime as _dt
-            now = _dt.utcnow().replace(tzinfo=ts.tzinfo) if ts.tzinfo else _dt.utcnow()
+            now = _dt.now(_tz.utc).replace(tzinfo=ts.tzinfo) if ts.tzinfo else _dt.now(_tz.utc)
             age_hours = round((now - ts).total_seconds() / 3600, 1)
             sensor_online = age_hours < 6  # sensor is "online" if data < 6h old
     return {
@@ -1388,9 +1403,7 @@ def delete_own_video(video_id: int, user: dict = Depends(get_current_user)):
     path = store.delete_video(video_id)
     if path is None:
         raise HTTPException(404, "video not found")
-    folder = Path(path).parent if path else None
-    if folder and folder.is_dir():
-        shutil.rmtree(folder, ignore_errors=True)
+    _unlink_upload(path)
     return {"ok": True, "deleted_video": video_id}
 
 
@@ -1401,12 +1414,7 @@ def delete_own_image(image_id: int, user: dict = Depends(get_current_user)):
     path = store.delete_image(image_id)
     if path is None:
         raise HTTPException(404, "image not found")
-    try:
-        p = Path(path)
-        if p.is_file():
-            p.unlink(missing_ok=True)
-    except OSError:
-        pass
+    _unlink_upload(path)
     return {"ok": True, "deleted_image": image_id}
 
 
@@ -1705,9 +1713,7 @@ def admin_delete_video(video_id: int, _: dict = Depends(require_admin)):
     path = store.delete_video(video_id)
     if path is None:
         raise HTTPException(404, "video not found")
-    folder = Path(path).parent if path else None
-    if folder and folder.is_dir():
-        shutil.rmtree(folder, ignore_errors=True)
+    _unlink_upload(path)
     return {"ok": True, "deleted_video": video_id}
 
 
@@ -1716,12 +1722,7 @@ def admin_delete_image(image_id: int, _: dict = Depends(require_admin)):
     path = store.delete_image(image_id)
     if path is None:
         raise HTTPException(404, "image not found")
-    try:
-        p = Path(path)
-        if p.is_file():
-            p.unlink(missing_ok=True)
-    except OSError:
-        pass
+    _unlink_upload(path)
     return {"ok": True, "deleted_image": image_id}
 
 

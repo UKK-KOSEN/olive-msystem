@@ -80,15 +80,6 @@ class AnalyseTimesTextRequest(BaseModel):
     upscale: bool | None = Field(default=None, description="Upscale low-res frames (True force, False disable, None auto from drone_mode)")
 
 
-class SoilMoistureInput(BaseModel):
-    """Optional soil moisture readings supplied by the operator."""
-    sensor1_moisture_percent: float | None = None
-    sensor2_moisture_percent: float | None = None
-    temperature: float | None = None
-    humidity: float | None = None
-    measured_at: str | None = None
-
-
 class AnalyseImageRequest(BaseModel):
     """Analyse a single uploaded image."""
     tree_id: str | None = None
