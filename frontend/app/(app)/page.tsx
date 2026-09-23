@@ -22,6 +22,8 @@ import { ObservationDetail } from '@/components/ObservationDetail';
 import { UpscaledBadge } from '@/components/UpscaledBadge';
 import VideoPreview from '@/components/VideoPreview';
 import { PageHeader } from '@/components/PageHeader';
+import { StatusBadge } from '@/components/StatusBadge';
+import { fmtMeasuredAt } from '@/lib/format';
 import ErrorNotice from '@/components/ErrorNotice';
 import {
   IconVideo,
@@ -61,17 +63,6 @@ function actionGuidance(st: HealthState): string {
     advice += ' 水分ストレスが高めのため、灌水を優先してください。';
   }
   return advice;
-}
-
-function StatusBadge({ status }: { status: Video['status'] }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    pending: { label: '待機中', cls: 'bg-neutral-100 text-neutral-600' },
-    processing: { label: '解析中', cls: 'bg-olive-50 text-olive-700' },
-    done: { label: '完了', cls: 'bg-health-good/10 text-health-good' },
-    error: { label: 'エラー', cls: 'bg-health-danger/10 text-health-danger' },
-  };
-  const m = map[status] || map.pending;
-  return <span className={`badge ${m.cls}`}>{m.label}</span>;
 }
 
 export default function Dashboard() {
@@ -687,7 +678,7 @@ export default function Dashboard() {
                         <p className="truncate text-xs text-neutral-500">
                           {o.filename || `観測 #${o.id}`}
                         </p>
-                        <p className="text-[11px] text-neutral-400">{formatMeasuredAt(o.observed_at)}</p>
+                        <p className="text-[11px] text-neutral-400">{fmtMeasuredAt(o.observed_at)}</p>
                       </div>
                       <span className="tabular-nums text-sm font-semibold text-neutral-800">
                         {sc != null ? (sc * 100).toFixed(0) : '—'}
@@ -784,7 +775,7 @@ export default function Dashboard() {
                     <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-neutral-400">
                       <span>{formatBytes(v.size_bytes)}</span>
                       {v.width && v.height && <span>{v.width}×{v.height}</span>}
-                      {v.recorded_at && <span>撮影 {formatMeasuredAt(v.recorded_at)}</span>}
+                      {v.recorded_at && <span>撮影 {fmtMeasuredAt(v.recorded_at)}</span>}
                     </p>
                   </div>
 
@@ -1055,7 +1046,7 @@ function SoilStatusCard({ status }: { status: SoilStatus }) {
       : status.source === 'error'
       ? { label: 'APIエラー', cls: 'bg-health-danger/10 text-health-danger' }
       : { label: '未設定', cls: 'bg-neutral-100 text-neutral-500' };
-  const measured = sm.measured_at ? formatMeasuredAt(sm.measured_at) : null;
+  const measured = sm.measured_at ? fmtMeasuredAt(sm.measured_at) : null;
 
   const ageH = status.data_age_hours;
   const stale = ageH != null && ageH >= 6;
@@ -1402,18 +1393,6 @@ function parseTimeSpec(spec: string): number {
   return Number.isNaN(s) ? NaN : s;
 }
 
-function formatMeasuredAt(iso?: string | null): string | null {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return null;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch {
-    return null;
-  }
-}
-
 function formatObservedAt(iso?: string | null): string {
-  return formatMeasuredAt(iso) ?? '—';
+  return fmtMeasuredAt(iso) ?? '—';
 }

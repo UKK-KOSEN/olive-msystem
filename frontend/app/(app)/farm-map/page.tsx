@@ -4,10 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api, FarmMapTree, FarmTreeRecord, FarmerRecord } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { healthColor, healthJa } from '@/components/charts';
+import { healthColor, healthJa, STATE_ORDER } from '@/components/charts';
 import { Snackbar } from '@/components/Snackbar';
+import { fmtDateTimeShort } from '@/lib/format';
+import ErrorNotice from '@/components/ErrorNotice';
 
-const HEALTH_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
 const MAP_COLS = 8;
 const CELL_W = 118;
 const PAD_X = 70;
@@ -215,7 +216,7 @@ export default function FarmMapPage() {
       {/* legend + filter + search */}
       <section className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-neutral-200 bg-white p-3 text-sm">
         <span className="font-medium text-neutral-700">凡例</span>
-        {HEALTH_ORDER.map((k) => (
+        {STATE_ORDER.map((k) => (
           <span key={k} className="flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-full" style={{ background: healthColor(k) }} />
             <span className="text-neutral-600">{healthJa(k)}</span>
@@ -801,7 +802,7 @@ function TreeDetail({
         </div>
         <div>
           <p className="text-xs text-neutral-500">最終観測</p>
-          <p className="mt-1 font-medium text-neutral-700">{tree.last_seen ? formatDate(tree.last_seen) : '—'}</p>
+          <p className="mt-1 font-medium text-neutral-700">{tree.last_seen ? fmtDateTimeShort(tree.last_seen) : '—'}</p>
         </div>
       </div>
       {state?.message ? (
@@ -983,10 +984,4 @@ function latestObserved(trees?: FarmMapTree[] | null): string {
   if (times.length === 0) return '—';
   const d = new Date(times[0]);
   return isNaN(d.getTime()) ? times[0] : d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }

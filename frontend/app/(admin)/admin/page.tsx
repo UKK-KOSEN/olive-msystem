@@ -19,32 +19,12 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSite } from '@/lib/site';
-import { healthJa, healthColor, TrendChart } from '@/components/charts';
+import { healthJa, healthColor, STATE_ORDER, TrendChart } from '@/components/charts';
+import { fmtBytes, fmtDateTime } from '@/lib/format';
 import { IconOlive } from '@/components/icons';
 import ErrorNotice from '@/components/ErrorNotice';
 import VideoPreview from '@/components/VideoPreview';
 import { Snackbar } from '@/components/Snackbar';
-
-function fmtBytes(bytes: number | null | undefined): string {
-  if (!bytes) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function fmtDateTime(iso?: string | null): string {
-  if (!iso) return '—';
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch {
-    return iso;
-  }
-}
-
-const HEALTH_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
 
 function farmerLabel(f: { username: string; display_name?: string | null; farm_name?: string | null }): string {
   if (f.farm_name) return f.farm_name;
@@ -1234,7 +1214,7 @@ function FarmersOverviewSection({ obs }: { obs: Observation[] }) {
         <div className="grid gap-3 md:grid-cols-2">
           {farmers.map((f) => {
             const total = f.observation_count || 0;
-            const maxSeg = Math.max(1, ...HEALTH_ORDER.map((k) => f.states?.[k] || 0));
+            const maxSeg = Math.max(1, ...STATE_ORDER.map((k) => f.states?.[k] || 0));
             return (
               <div key={f.id} className="rounded-lg border border-neutral-100 p-3.5">
                 <div className="flex items-center justify-between gap-2">
@@ -1267,7 +1247,7 @@ function FarmersOverviewSection({ obs }: { obs: Observation[] }) {
 
                 <div className="mt-3">
                   <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-neutral-100">
-                    {HEALTH_ORDER.map((k) => {
+                    {STATE_ORDER.map((k) => {
                       const n = f.states?.[k] || 0;
                       if (!n) return null;
                       return (
@@ -1282,7 +1262,7 @@ function FarmersOverviewSection({ obs }: { obs: Observation[] }) {
                     })}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
-                    {HEALTH_ORDER.map((k) => (
+                    {STATE_ORDER.map((k) => (
                       <span key={k} className="inline-flex items-center gap-1 text-neutral-500">
                         <span className="h-2 w-2 rounded-full" style={{ background: healthColor(k) }} />
                         {healthJa(k)} {f.states?.[k] || 0}

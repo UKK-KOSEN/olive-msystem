@@ -3,51 +3,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, FarmerRecord, Observation, TreeRecord } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { healthJa, healthColor, TrendChart, StatePill } from '@/components/charts';
+import { healthJa, healthColor, STATE_ORDER, stateOf, obsScore, TrendChart, StatePill } from '@/components/charts';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import ErrorNotice from '@/components/ErrorNotice';
 import { ObservationDetail } from '@/components/ObservationDetail';
 import { IconUser, IconDownload, IconTrash } from '@/components/icons';
+import { fmtDateTime } from '@/lib/format';
 
-const STATE_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
 type StateFilter = 'all' | (typeof STATE_ORDER)[number];
 type SourceFilter = 'all' | 'video' | 'image';
-
-function stateOf(o: Observation): string {
-  if (o.health_state?.label) return o.health_state.label;
-  const s = o.overall_health_score;
-  if (s == null) return 'good';
-  if (s >= 0.75) return 'happy';
-  if (s >= 0.55) return 'good';
-  if (s >= 0.35) return 'caution';
-  return 'danger';
-}
-
-function fmtDateTime(iso?: string | null): string {
-  if (!iso) return '—';
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch {
-    return iso;
-  }
-}
 
 function ownerLabel(o: { display_name?: string | null; farm_name?: string | null; username?: string }): string {
   if (o.farm_name) return o.farm_name;
   if (o.display_name) return o.display_name;
   return o.username || '';
-}
-
-function obsScore(o: Observation): number | null {
-  if (o.health_state?.score != null) return o.health_state.score;
-  if (o.overall_health_score != null) return o.overall_health_score;
-  const stress = o.result?.analysis_details?.stress;
-  if (stress?.overall_health_score != null) return stress.overall_health_score;
-  return null;
 }
 
 export default function TrackingPage() {

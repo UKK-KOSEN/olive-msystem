@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api, SoilMoistureData, SoilMoistureInput, SoilStatus } from '@/lib/api';
+import { fmtMeasuredAt } from '@/lib/format';
 
 const RISK_COLOR: Record<string, string> = {
   low: '#4c9a5a',
@@ -19,18 +20,6 @@ function riskColor(risk?: string): string {
 function fmt(val: number | null | undefined, unit = '', digits = 0, suffix = ''): string {
   if (val == null || Number.isNaN(val)) return '—';
   return `${val.toFixed(digits)}${unit}${suffix}`;
-}
-
-function fmtMeasuredAt(iso?: string | null): string | null {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return null;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch {
-    return null;
-  }
 }
 
 export function SoilDisplay({

@@ -33,12 +33,46 @@ export function healthColor(label: string): string {
   }
 }
 
-function obsScore(o: Observation): number | null {
+export const STATE_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
+
+export type HealthState = (typeof STATE_ORDER)[number];
+
+/** Map a health label to its display order index. */
+export function stateIndex(label: string): number {
+  return STATE_ORDER.indexOf(label as HealthState);
+}
+
+export function obsScore(o: Observation): number | null {
   if (o.health_state?.score != null) return o.health_state.score;
   const stress = o.result?.analysis_details?.stress;
   if (stress?.overall_health_score != null) return stress.overall_health_score;
   if (o.overall_health_score != null) return o.overall_health_score;
   return null;
+}
+
+/** Derive a health label for an observation: explicit label, else score thresholds. */
+export function stateOf(o: Observation): string {
+  if (o.health_state?.label) return o.health_state.label;
+  return stateOfScore(obsScore(o));
+}
+
+/** Derive a health label from a numeric score (mirrors backend thresholds). */
+export function stateOfScore(score: number | null | undefined): HealthState {
+  if (score == null) return 'good';
+  if (score >= 0.75) return 'happy';
+  if (score >= 0.55) return 'good';
+  if (score >= 0.35) return 'caution';
+  return 'danger';
+}
+
+/** Color for a numeric health score. */
+export function scoreColor(score: number | null | undefined): string {
+  return healthColor(stateOfScore(score));
+}
+
+/** Japanese label for a numeric health score. */
+export function scoreLabel(score: number | null | undefined): string {
+  return healthJa(stateOfScore(score));
 }
 
 export function StatePill({ label, color }: { label: string; color: string }) {

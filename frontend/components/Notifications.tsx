@@ -5,6 +5,7 @@ import { api, Notification } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { IconBell, IconChevron, IconSend, IconTrash } from '@/components/icons';
 import ErrorNotice from '@/components/ErrorNotice';
+import { fmtDateTimeMedium } from '@/lib/format';
 
 export function NotificationsList({ showBadge }: { showBadge?: boolean }) {
   const { user } = useAuth();
@@ -96,13 +97,6 @@ export function NotificationsList({ showBadge }: { showBadge?: boolean }) {
     } catch (e: any) {
       setError(e?.message || '削除に失敗しました');
     }
-  };
-
-  const fmtTime = (iso?: string) => {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' });
   };
 
   const targetLabel = (n: Notification) => {
@@ -224,7 +218,7 @@ export function NotificationsList({ showBadge }: { showBadge?: boolean }) {
                         <span className="badge bg-neutral-100 text-neutral-500 text-[10px]">{targetLabel(n)}</span>
                       </div>
                       <div className="mt-1 text-xs text-neutral-400">
-                        {fmtTime(n.created_at)}
+                        {fmtDateTimeMedium(n.created_at)}
                         {n.creator_name ? ` · ${n.creator_name}` : ''}
                       </div>
                     </div>

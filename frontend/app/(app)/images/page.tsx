@@ -2,49 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ImageAsset, Observation, SoilMoistureInput } from '@/lib/api';
-import { healthJa, healthColor } from '@/components/charts';
+import { healthJa, healthColor, STATE_ORDER, stateOf, obsScore } from '@/components/charts';
 import { SoilDisplay, SoilInputPanel } from '@/components/SoilComponent';
 import { ObservationDetail } from '@/components/ObservationDetail';
 import { UpscaledBadge } from '@/components/UpscaledBadge';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { StatusBadge } from '@/components/StatusBadge';
 import ErrorNotice from '@/components/ErrorNotice';
 import { IconImage, IconTrash } from '@/components/icons';
 import { Snackbar } from '@/components/Snackbar';
+import { fmtBytes, fmtDate } from '@/lib/format';
 
-const HEALTH_LABELS = ['happy', 'good', 'caution', 'danger'] as const;
 const SEARCH_CONCURRENCY = 4;
-
-function StatusBadge({ status }: { status: ImageAsset['status'] }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    pending: { label: '未解析', cls: 'bg-neutral-100 text-neutral-600' },
-    processing: { label: '解析中', cls: 'bg-olive-50 text-olive-700' },
-    done: { label: '完了', cls: 'bg-health-good/10 text-health-good' },
-    error: { label: 'エラー', cls: 'bg-health-danger/10 text-health-danger' },
-  };
-  const m = map[status] || map.pending;
-  return <span className={`badge ${m.cls}`}>{m.label}</span>;
-}
-
-function fmtBytes(bytes: number | null | undefined): string {
-  if (!bytes) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function fmtDate(iso: string | undefined | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('ja-JP', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 function originalUrl(img: ImageAsset): string {
   return `/media/${encodeURIComponent(img.filename)}`;
@@ -52,24 +22,6 @@ function originalUrl(img: ImageAsset): string {
 
 function annotatedUrlOf(obs: Observation | undefined): string | null {
   return (obs?.result?.['_frame_annotated_url'] as string) || null;
-}
-
-function scoreOf(obs: Observation): number | null {
-  if (obs.health_state?.score != null) return obs.health_state.score;
-  const stress = obs.result?.analysis_details?.stress as Record<string, any> | undefined;
-  if (stress?.overall_health_score != null) return stress.overall_health_score;
-  if (obs.overall_health_score != null) return obs.overall_health_score;
-  return null;
-}
-
-function labelOf(obs: Observation): string {
-  if (obs.health_state?.label) return obs.health_state.label;
-  const s = scoreOf(obs);
-  if (s == null) return 'unknown';
-  if (s >= 0.75) return 'happy';
-  if (s >= 0.55) return 'good';
-  if (s >= 0.35) return 'caution';
-  return 'danger';
 }
 
 /** Latest observation by observed_at (string compare is safe for ISO-8601). */
@@ -141,11 +93,11 @@ export default function ImageAnalysisPage() {
     let n = 0;
     const counts: Record<string, number> = { happy: 0, good: 0, caution: 0, danger: 0 };
     for (const o of list) {
-      const s = scoreOf(o);
+      const s = obsScore(o);
       if (s == null) continue;
       sum += s;
       n += 1;
-      const l = labelOf(o);
+      const l = stateOf(o);
       if (counts[l] != null) counts[l] += 1;
     }
     return { avg: n > 0 ? sum / n : null, issues: counts.caution + counts.danger, counts, n };
@@ -415,7 +367,7 @@ export default function ImageAnalysisPage() {
       {stats.n > 0 && (
         <section className="mb-6 rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
           <div className="flex h-2 w-full overflow-hidden rounded-full bg-neutral-100">
-            {HEALTH_LABELS.map((k) =>
+            {STATE_ORDER.map((k) =>
               stats.counts[k] > 0 ? (
                 <div
                   key={k}
@@ -426,7 +378,7 @@ export default function ImageAnalysisPage() {
             )}
           </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-            {HEALTH_LABELS.map((k) => (
+            {STATE_ORDER.map((k) => (
               <span key={k} className="inline-flex items-center gap-1.5 text-[11px] text-neutral-500">
                 <span className="h-2 w-2 rounded-full" style={{ background: healthColor(k) }} />
                 {healthJa(k)}
@@ -730,12 +682,12 @@ export default function ImageAnalysisPage() {
                     {res && (
                       <span
                         className="rounded-full px-2.5 py-0.5 text-xs font-bold"
-                        style={{ background: healthColor(labelOf(res)) + '22', color: healthColor(labelOf(res)) }}
+                        style={{ background: healthColor(stateOf(res)) + '22', color: healthColor(stateOf(res)) }}
                       >
-                        {healthJa(labelOf(res))}
+                        {healthJa(stateOf(res))}
                       </span>
                     )}
-                    <StatusBadge status={img.status} />
+                    <StatusBadge status={img.status} pendingLabel="未解析" />
                     <button
                       onClick={() => runImage(img)}
                       disabled={running === img.id || batchBusy}
@@ -868,7 +820,7 @@ export default function ImageAnalysisPage() {
                       </span>
                     ) : null}
                     <span className="absolute left-1.5 top-1.5 flex flex-col items-start gap-1">
-                      <StatusBadge status={img.status} />
+                      <StatusBadge status={img.status} pendingLabel="未解析" />
                       {res?.tree_id ? (
                         <span className="rounded-full bg-black/55 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur-sm">
                           {res.tree_id}
@@ -878,9 +830,9 @@ export default function ImageAnalysisPage() {
                     {res && (
                       <span
                         className="absolute bottom-1.5 left-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold text-white shadow"
-                        style={{ background: healthColor(labelOf(res)) }}
+                        style={{ background: healthColor(stateOf(res)) }}
                       >
-                        {healthJa(labelOf(res))}
+                        {healthJa(stateOf(res))}
                       </span>
                     )}
                     <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 pb-1 pt-6 text-left text-[11px] font-medium text-white" title={img.filename}>
@@ -997,7 +949,7 @@ function Lightbox({
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold" title={img.filename}>{img.filename}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <StatusBadge status={img.status} />
+            <StatusBadge status={img.status} pendingLabel="未解析" />
             {obs ? (
               <>
                 {obs.tree_id ? (
@@ -1007,9 +959,9 @@ function Lightbox({
                 ) : null}
                 <span
                   className="rounded-full px-2 py-0.5 text-[11px] font-bold"
-                  style={{ background: healthColor(labelOf(obs)) + '33', color: healthColor(labelOf(obs)) }}
+                  style={{ background: healthColor(stateOf(obs)) + '33', color: healthColor(stateOf(obs)) }}
                 >
-                  {healthJa(labelOf(obs))} · {scoreOf(obs) != null ? `${Math.round((scoreOf(obs) ?? 0) * 100)}点` : ''}
+                  {healthJa(stateOf(obs))} · {obsScore(obs) != null ? `${Math.round((obsScore(obs) ?? 0) * 100)}点` : ''}
                 </span>
                 <span className="text-xs text-neutral-300">
                   {obs.observed_at ? new Date(obs.observed_at).toLocaleString('ja-JP') : ''}

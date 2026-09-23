@@ -4,13 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { api, CalendarData, CalendarObservation, HealthState, FarmerRecord } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { healthJa, healthColor } from '@/components/charts';
+import { healthJa, healthColor, STATE_ORDER, scoreColor } from '@/components/charts';
 import { IconChevronRight } from '@/components/icons';
 import { PageHeader } from '@/components/PageHeader';
 import ErrorNotice from '@/components/ErrorNotice';
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
-const STATE_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
 type ViewMode = 'month' | 'week';
 type StateFilter = 'all' | (typeof STATE_ORDER)[number];
 
@@ -264,7 +263,7 @@ export default function CalendarPage() {
               label="平均スコア"
               value={avgScore != null ? String((avgScore * 100).toFixed(0)) : '—'}
               unit="点"
-              color={avgScore != null ? avgColor(avgScore) : undefined}
+              color={avgScore != null ? scoreColor(avgScore) : undefined}
             />
             <SummaryBox label="健康・良好" value={String(stateCounts.happy + stateCounts.good)} color={healthColor('happy')} />
             <SummaryBox label="注意・要管理" value={String(stateCounts.caution + stateCounts.danger)} color={healthColor('danger')} />
@@ -311,7 +310,7 @@ export default function CalendarPage() {
                       </span>
                       {showDay && d && (
                         <span className="mt-auto flex items-center justify-between">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: d.state ? healthColor(d.state.label) : avgColor(d.score ?? 0) }} />
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: d.state ? healthColor(d.state.label) : scoreColor(d.score ?? 0) }} />
                           <span className={`text-[10px] font-bold tabular-nums ${selected ? 'text-white' : 'text-neutral-700'}`}>
                             {d.score != null ? (d.score * 100).toFixed(0) : '—'}
                           </span>
@@ -371,7 +370,7 @@ export default function CalendarPage() {
                       </span>
                       {showDay && d && (
                         <div className="mt-1 flex items-center justify-between px-0.5">
-                          <span className="h-2.5 w-2.5 rounded-full" style={{ background: d.state ? healthColor(d.state.label) : avgColor(d.score ?? 0) }} />
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ background: d.state ? healthColor(d.state.label) : scoreColor(d.score ?? 0) }} />
                           <span className={`text-xs font-bold tabular-nums ${selected ? 'text-white' : 'text-neutral-800'}`}>
                             {d.score != null ? (d.score * 100).toFixed(0) : '—'}
                           </span>
@@ -406,7 +405,7 @@ export default function CalendarPage() {
               {daily[selectedDate] && (
                 <div className="mb-3 flex items-center gap-3 rounded-lg bg-neutral-50 p-3">
                   <span className="grid h-10 w-10 place-items-center rounded-full text-sm font-bold"
-                    style={{ background: daily[selectedDate].state ? healthColor(daily[selectedDate].state!.label) : avgColor(daily[selectedDate].score ?? 0), color: '#fff' }}>
+                    style={{ background: daily[selectedDate].state ? healthColor(daily[selectedDate].state!.label) : scoreColor(daily[selectedDate].score ?? 0), color: '#fff' }}>
                     {daily[selectedDate].score != null ? (daily[selectedDate].score * 100).toFixed(0) : '—'}
                   </span>
                   <div>
@@ -460,13 +459,6 @@ function startOfWeek(d: Date): Date {
   return date;
 }
 
-function avgColor(score: number): string {
-  if (score >= 0.75) return healthColor('happy');
-  if (score >= 0.55) return healthColor('good');
-  if (score >= 0.35) return healthColor('caution');
-  return healthColor('danger');
-}
-
 /** Native hover tooltip for calendar cells. */
 function cellTitle(d: { score: number | null; count: number } | undefined): string {
   if (!d) return '';
@@ -477,7 +469,7 @@ function cellTitle(d: { score: number | null; count: number } | undefined): stri
 /** Heat-map background: interpolate between white and the state color by score. */
 function heatBg(score: number | null): string {
   if (score == null) return '#fafafa';
-  const c = avgColor(score);
+  const c = scoreColor(score);
   const r = parseInt(c.slice(1, 3), 16);
   const g = parseInt(c.slice(3, 5), 16);
   const b = parseInt(c.slice(5, 7), 16);

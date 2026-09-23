@@ -2,19 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatTimestamp, Observation, OliveStatus } from '@/lib/api';
-import { healthColor, healthJa, StatePill } from '@/components/charts';
+import { healthColor, healthJa, StatePill, STATE_ORDER, scoreColor } from '@/components/charts';
 import { FarmerHome } from '@/components/FarmerHome';
 import { PageHeader } from '@/components/PageHeader';
 import ErrorNotice from '@/components/ErrorNotice';
 import Link from 'next/link';
 
-const STATE_ORDER = ['happy', 'good', 'caution', 'danger'] as const;
-
 function HealthGauge({ score }: { score: number }) {
   const pct = Math.max(0, Math.min(100, score * 100));
-  const color = healthColor(
-    score >= 0.75 ? 'happy' : score >= 0.55 ? 'good' : score >= 0.35 ? 'caution' : 'danger'
-  );
+  const color = scoreColor(score);
   const zones = [
     { lo: 0, hi: 35, color: '#c25a4a' },
     { lo: 35, hi: 55, color: '#c99a2e' },
