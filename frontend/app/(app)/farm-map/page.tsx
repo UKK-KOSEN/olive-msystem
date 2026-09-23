@@ -291,10 +291,6 @@ export default function FarmMapPage() {
         return hb ? <HealthBreakdown counts={hb} /> : null;
       })()}
 
-      {info && (
-        <div className="mt-3 rounded-lg bg-olive-50 px-3 py-2.5 text-sm text-olive-800">{info}</div>
-      )}
-
       {loading ? (
         <div className="grid place-items-center rounded-xl border border-neutral-200 bg-white py-24 text-sm text-neutral-400" role="status" aria-live="polite" aria-busy="true">
           読み込み中…
