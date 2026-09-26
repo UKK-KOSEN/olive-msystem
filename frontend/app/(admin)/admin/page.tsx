@@ -730,7 +730,6 @@ function SensorAlertSection({
     const tplGlobal = alerts?.templates?.global || {};
     setTplGlobalTitle(tplGlobal?.title ?? '');
     setTplGlobalBody(tplGlobal?.body ?? '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alerts, refresh]);
 
   const save = async () => {

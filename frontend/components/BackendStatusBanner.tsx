@@ -8,7 +8,6 @@ export default function BackendStatusBanner() {
 
   useEffect(() => {
     let alive = true;
-    let timer: ReturnType<typeof setInterval>;
     const check = async () => {
       const ok = await api.pingHealth();
       if (!alive) return;
@@ -19,7 +18,7 @@ export default function BackendStatusBanner() {
       }
     };
     check();
-    timer = setInterval(check, 30_000);
+    const timer = setInterval(check, 30_000);
     return () => {
       alive = false;
       clearInterval(timer);

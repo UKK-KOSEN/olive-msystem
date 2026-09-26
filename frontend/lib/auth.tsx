@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api, AuthUser, setAuthToken, getAuthToken, UnauthorizedError } from '@/lib/api';
+import { api, AuthUser, setAuthToken, getAuthToken } from '@/lib/api';
 
 const TOKEN_KEY = 'olive_msystem_token';
 

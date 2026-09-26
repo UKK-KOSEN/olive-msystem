@@ -209,7 +209,7 @@ export function TrendChart({
   const pill = (() => {
     const w = 64;
     const h = 24;
-    let bx = Math.max(pad.left + w / 2 + 4, Math.min(width - pad.right - w / 2 - 4, last.x));
+    const bx = Math.max(pad.left + w / 2 + 4, Math.min(width - pad.right - w / 2 - 4, last.x));
     let by = last.y - h - 16;
     if (by < pad.top + 2) by = last.y + 16;
     return { bx, by, w, h };
