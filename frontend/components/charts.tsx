@@ -162,6 +162,10 @@ export function TrendChart({
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     if (rect.width === 0) return;
+    if (ptsF.length === 0) {
+      setHoverIdx(null);
+      return;
+    }
     const vx = (e.clientX - rect.left) * (width / rect.width);
     let best = 0;
     let bestD = Infinity;

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 
 export default function AppError({
   error,
@@ -10,35 +11,35 @@ export default function AppError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error('App error boundary caught:', error);
+    console.error('Page error:', error);
   }, [error]);
 
   return (
-    <div className="grid min-h-[60vh] place-items-center px-4" aria-live="assertive" role="alert">
-      <div className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-8 text-center shadow-sm">
-        <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-health-danger/10 text-2xl">
-          ⚠️
-        </div>
-        <h2 className="text-lg font-semibold text-neutral-900">表示中にエラーが発生しました</h2>
-        <p className="mt-2 text-sm text-neutral-500">
-          一時的な問題の可能性があります。再読み込みをお試しください。
+    <div className="flex min-h-full flex-col items-center justify-center gap-4 p-8 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-2xl">
+        ⚠️
+      </div>
+      <div>
+        <h2 className="text-base font-semibold text-neutral-900">
+          このページの表示中にエラーが発生しました
+        </h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          他の機能は引き続きご利用いただけます。
         </p>
-        <div className="mt-6 flex justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => reset()}
-            className="btn-primary"
-          >
-            再読み込み
-          </button>
-          <button
-            type="button"
-            onClick={() => { window.location.href = '/'; }}
-            className="btn-secondary"
-          >
-            ダッシュボードへ
-          </button>
-        </div>
+      </div>
+      <div className="flex gap-3">
+        <button
+          onClick={() => reset()}
+          className="rounded-lg bg-olive-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-olive-700"
+        >
+          再試行
+        </button>
+        <Link
+          href="/"
+          className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+        >
+          ダッシュボードへ
+        </Link>
       </div>
     </div>
   );

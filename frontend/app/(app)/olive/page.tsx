@@ -78,6 +78,7 @@ export default function OlivePage() {
 
   const current = status?.current_state;
   const total = status?.total_observations ?? 0;
+  const states: Record<string, number> = status?.states ?? { happy: 0, good: 0, caution: 0, danger: 0 };
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
@@ -149,18 +150,18 @@ export default function OlivePage() {
             <Metric label="解析観測点数" value={String(total)} />
             <Metric
               label="健康・良好"
-              value={String((status.states.happy || 0) + (status.states.good || 0))}
-              sub={`健康 ${status.states.happy || 0} / 良好 ${status.states.good || 0}`}
+              value={String((states.happy || 0) + (states.good || 0))}
+              sub={`健康 ${states.happy || 0} / 良好 ${states.good || 0}`}
             />
             <Metric
               label="注意"
-              value={String(status.states.caution || 0)}
+              value={String(states.caution || 0)}
               sub="水分・葉の状態チェック対象"
               color={healthColor('caution')}
             />
             <Metric
               label="要管理"
-              value={String(status.states.danger || 0)}
+              value={String(states.danger || 0)}
               sub="早めの対応が必要"
               color={healthColor('danger')}
             />
@@ -170,8 +171,8 @@ export default function OlivePage() {
           {total > 0 && (
             <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {STATE_ORDER.map((key) => {
-                const info = status.labels[key];
-                const count = status.states[key] || 0;
+                const info = status.labels?.[key] ?? { ja: key, svg: '', color: '' };
+                const count = states[key] || 0;
                 const pct = (count / total) * 100;
                 const color = healthColor(key);
                 return (

@@ -5,6 +5,29 @@ import { api, AuthUser, setAuthToken, getAuthToken } from '@/lib/api';
 
 const TOKEN_KEY = 'olive_msystem_token';
 
+function lsGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function lsSet(key: string, value: string): boolean {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function lsRemove(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore: storage unavailable (private mode, quota, etc.)
+  }
+}
+
 interface AuthContextValue {
   user: AuthUser | null;
   token: string | null;
@@ -32,7 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // restore from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem(TOKEN_KEY);
+    const stored = lsGet(TOKEN_KEY);
     if (stored) {
       setAuthToken(stored);
       setTokenState(stored);
@@ -41,7 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .then(setUser)
         .catch(() => {
           setAuthToken(null);
-          localStorage.removeItem(TOKEN_KEY);
+          lsRemove(TOKEN_KEY);
           setTokenState(null);
         })
         .finally(() => setLoading(false));
@@ -54,7 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthToken(token);
     setTokenState(token);
     setUser(user);
-    localStorage.setItem(TOKEN_KEY, token);
+    lsSet(TOKEN_KEY, token);
   }, []);
 
   const login = useCallback(
@@ -83,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setUser(null);
     setTokenState(null);
-    localStorage.removeItem(TOKEN_KEY);
+    lsRemove(TOKEN_KEY);
   }, []);
 
   const refresh = useCallback(async () => {

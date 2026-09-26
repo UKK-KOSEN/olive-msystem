@@ -502,8 +502,19 @@ async function handle(res: Response) {
     throw new ApiError(msg, res.status, isRetryableStatus(res.status));
   }
   const ct = res.headers.get('content-type') || '';
-  if (ct.includes('application/json')) return res.json();
-  return res.text();
+  if (ct.includes('application/json')) {
+    try {
+      return await res.json();
+    } catch {
+      // A 200 response that claims JSON but is not parseable is treated as a
+      // server fault; returning a number/string here would crash downstream
+      // rendering with a confusing error, so surface it as a proper failure.
+      throw new ApiError('サーバーの応答を解析できませんでした', res.status, isRetryableStatus(res.status));
+    }
+  }
+  // Success with a non-JSON body (e.g. HTML from a proxy, "OK" plain text)
+  // is not an API result. Reject instead of leaking a raw string to callers.
+  throw new ApiError(`サーバーから予期しない応答形式が返されました（HTTP ${res.status}）`, res.status, isRetryableStatus(res.status));
 }
 
 function get(url: string, opts?: { timeoutMs?: number; retry?: boolean }): Promise<Response> {

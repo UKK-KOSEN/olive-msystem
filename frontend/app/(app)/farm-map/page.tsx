@@ -77,7 +77,7 @@ export default function FarmMapPage() {
 
   const summary = useMemo(() => {
     const out = {
-      total: data?.trees.length ?? 0,
+      total: data?.trees?.length ?? 0,
       registered: data?.registered_count ?? 0,
       unregistered: data?.unregistered_count ?? 0,
       health: { happy: 0, good: 0, caution: 0, danger: 0 } as Record<string, number>,

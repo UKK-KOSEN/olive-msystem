@@ -74,7 +74,7 @@ export default function CalendarPage() {
 
   // ---- derived stats ----
   const allObs = useMemo<CalendarObservation[]>(() => {
-    if (!data) return [];
+    if (!data?.observations) return [];
     return Object.values(data.observations).flat();
   }, [data]);
 
