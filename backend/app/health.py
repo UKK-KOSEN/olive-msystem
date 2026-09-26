@@ -20,27 +20,40 @@ def overall_health_score(rec: dict) -> float:
     When soil moisture data has been integrated, the combined visual+moisture
     score takes precedence; otherwise the visual stress score is used.
     """
+    def _f(value) -> Optional[float]:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
     ha = rec.get("health_assessment") or {}
-    combined = ha.get("combined_health_score")
+    combined = _f(ha.get("combined_health_score"))
     if combined is not None:
-        return float(combined)
+        return combined
     if "overall_health_score" in rec and rec["overall_health_score"] is not None:
-        return float(rec["overall_health_score"])
+        s = _f(rec["overall_health_score"])
+        if s is not None:
+            return s
     details = rec.get("analysis_details") or {}
     stress = details.get("stress") or {}
-    score = stress.get("overall_health_score")
-    if score is not None:
-        return float(score)
+    s = _f(stress.get("overall_health_score"))
+    if s is not None:
+        return s
     return 0.5
 
 
 def water_stress(rec: dict) -> Optional[float]:
     if "water_stress" in rec and rec["water_stress"] is not None:
-        return float(rec["water_stress"])
+        try:
+            return float(rec["water_stress"])
+        except (TypeError, ValueError):
+            return None
     details = rec.get("analysis_details") or {}
     stress = details.get("stress") or {}
     ws = stress.get("water_stress")
-    return float(ws) if ws is not None else None
+    try:
+        return float(ws) if ws is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_epoch(value) -> Optional[float]:
@@ -121,7 +134,10 @@ def aggregate_health_state(rows: list[dict]) -> Optional[dict]:
     latest = pts[-1]
     latest_result = latest["obs"].get("result") or {}
     ws = water_stress(latest_result)
-    wrinkled = int(latest_result.get("wrinkled_fruit_count", 0) or 0)
+    try:
+        wrinkled = int(latest_result.get("wrinkled_fruit_count", 0) or 0)
+    except (TypeError, ValueError):
+        wrinkled = 0
     # Highest recent water-stress across the last few points (safety check).
     ws_recent = [water_stress(p["obs"].get("result") or {}) for p in pts[-3:]]
     ws_recent = [w for w in ws_recent if w is not None]
@@ -186,7 +202,10 @@ def health_state(rec: dict) -> dict:
     """
     score = overall_health_score(rec)
     ws = water_stress(rec)
-    wrinkled = int(rec.get("wrinkled_fruit_count", 0) or 0)
+    try:
+        wrinkled = int(rec.get("wrinkled_fruit_count", 0) or 0)
+    except (TypeError, ValueError):
+        wrinkled = 0
     th = health_thresholds()
     if score >= th["happy"]:
         label, color = "happy", "#4ade80"

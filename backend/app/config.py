@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent  # backend/
@@ -57,6 +58,29 @@ def load_settings() -> dict:
     return merged
 
 
+def atomic_write(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Write a file atomically (temp file + os.replace).
+
+    A crash/power loss mid-write must never leave a truncated JSON/YAML file,
+    since the lenient loaders silently swallow the error and revert to
+    defaults — silently losing the API key / alert channels / thresholds.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def save_settings(settings: dict) -> dict:
     """Validate and persist settings; merge over current settings."""
     current = load_settings()
@@ -83,9 +107,10 @@ def save_settings(settings: dict) -> dict:
         else:
             cur_site[key] = default
 
-    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_PATH.write_text(
-        json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write(
+        SETTINGS_PATH,
+        json.dumps(current, ensure_ascii=False, indent=2) + "\n",
+    )
     return current
 
 # Path to the original olive-p project that owns the analysis algorithm.

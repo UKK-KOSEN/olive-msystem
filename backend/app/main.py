@@ -38,7 +38,10 @@ from .storage import Store, verify_password
 
 ensure_dirs()
 _LOGS_DIR = ROOT / "logs"
-_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    _LOGS_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 _BOOT_TIME = time.time()
 
 app = FastAPI(title="olive-msystem", version="1.0.0")
@@ -63,11 +66,47 @@ async def standby_read_only(request, call_next):
             status_code=503,
             content={"detail": "スタンバイインスタンスでは書き込み操作を受け付けません"},
         )
+    # If the DB was unavailable at boot, retry lazily before any handler runs
+    # so a transient startup lock cannot take the whole API down. Health probes
+    # keep working in degraded mode (they report "degraded" themselves).
+    if store is None and request.url.path not in {"/api/health", "/api/health/ready"}:
+        st = _ensure_store()
+        if st is None:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "データベースが一時的に利用できません。しばらくしてから再試行してください。"},
+            )
     return await call_next(request)
 
 
-store = Store(DB_PATH, initialize_schema=IS_ACTIVE, read_only=not IS_ACTIVE)
-runner = Runner(store, workers=1) if IS_ACTIVE else None
+def _open_store_with_retries(max_attempts: int = 4) -> Store:
+    """Open the SQLite store, retrying transient lock/corruption errors.
+
+    Import must never fail because the DB was momentarily locked or the
+    schema init hit a transient error; the watchdog keeps the service alive,
+    so a few bounded retries here prevent the boot-time crash loop (F1/F2).
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return Store(DB_PATH, initialize_schema=IS_ACTIVE, read_only=not IS_ACTIVE)
+        except Exception as exc:  # noqa: PERF203
+            last_exc = exc
+            if attempt < max_attempts:
+                time.sleep(2 * attempt)
+    raise RuntimeError(f"could not open the database after {max_attempts} attempts: {last_exc}")
+
+
+try:
+    store = _open_store_with_retries()
+    _store_ready = True
+except Exception:
+    # Boot must survive even a broken DB: report degraded via /api/health and
+    # let the operator see the error instead of a crash loop. A fresh Store is
+    # attempted lazily by _ensure_store on the first request.
+    logging.getLogger("olive-msystem").exception("database init failed; starting degraded")
+    store = None
+    _store_ready = False
 
 
 @lru_cache(maxsize=1)
@@ -76,7 +115,23 @@ def get_grader():
 
 
 if IS_ACTIVE:
-    get_grader()
+    try:
+        get_grader()
+    except Exception:
+        logging.getLogger("olive-msystem").warning(
+            "olive-p detection engine unavailable at boot; analysis will fall back "
+            "to per-request errors until it becomes available", exc_info=True)
+
+
+runner: Optional[Runner] = None
+if IS_ACTIVE and _store_ready:
+    try:
+        # workers default from config; construction is guarded so a thread
+        # start failure or a first-connection DB error cannot kill the boot.
+        runner = Runner(store)
+    except Exception:
+        logging.getLogger("olive-msystem").exception(
+            "runner could not be started; video analysis is disabled for this boot")
 
 # Log to both console and a rotating file, so a crash/restart can be
 # investigated later even if the console window was closed.
@@ -94,14 +149,34 @@ except Exception:
     pass  # logging is best-effort; never block startup on it
 
 
+def _ensure_store() -> Optional[Store]:
+    """Return the store, lazily re-opening it if the boot-time open failed.
+
+    A transient DB lock at startup must not leave the process permanently
+    degraded; the first request that needs ``store`` retries the open.
+    """
+    global store, _store_ready
+    if store is not None:
+        return store
+    try:
+        store = _open_store_with_retries(max_attempts=1)
+        _store_ready = True
+        logger.info("database re-opened successfully after degraded boot")
+    except Exception:
+        logger.warning("database still unavailable (degraded mode)")
+    return store
+
+
 @app.get("/api/health")
 def health():
     """Liveness probe for the ops monitor / load balancer (no auth)."""
     counts = {}
     db_ok = False
     try:
-        counts = store.count()
-        db_ok = True
+        st = _ensure_store()
+        if st is not None:
+            counts = st.count()
+            db_ok = True
     except Exception:
         db_ok = False
     return {
@@ -138,19 +213,33 @@ from .sensor_alerts import run_monitor as _sensor_alerts_run
 from .sensor_alerts import load_alerts_config as _alerts_cfg
 
 
+def _safe_monitor_interval() -> float:
+    """Return the configured check interval (>= 30s), never raising."""
+    try:
+        cfg = _alerts_cfg() or {}
+        return max(float(cfg.get("check_interval_minutes", 10)) * 60, 30)
+    except Exception:
+        return 600
+
+
 def _sensor_monitor_loop():
     """Background thread: run the sensor-alert state machine periodically.
 
     Runs once immediately after startup so anomalies are detected without
-    waiting, then sleeps for the configured check interval.
+    waiting, then sleeps for the configured check interval. Every step is
+    guarded so one bad config value or DB hiccup can never kill the thread.
     """
     while True:
+        interval_sec = _safe_monitor_interval()
         try:
-            _sensor_alerts_run(store)
+            if store is not None:
+                _sensor_alerts_run(store)
         except Exception:
             logger.exception("sensor monitor error")
-        interval_sec = max(float(_alerts_cfg().get("check_interval_minutes", 10)) * 60, 30)
-        time.sleep(interval_sec)
+        try:
+            time.sleep(interval_sec)
+        except Exception:  # pragma: no cover
+            time.sleep(600)
 
 
 def _seed_admin() -> None:
@@ -164,6 +253,17 @@ def _seed_admin() -> None:
 
     A generated password is logged once at startup so it can be retrieved.
     """
+    if store is None:
+        logger.warning("seed admin skipped: database unavailable")
+        return
+    try:
+        _seed_admin_inner()
+    except Exception:
+        # A failure here must never block web serving; retry on next boot.
+        logger.exception("admin seeding failed (non-fatal)")
+
+
+def _seed_admin_inner() -> None:
     import os
     import secrets
     if os.environ.get("ADMIN_PASSWORD"):
@@ -185,8 +285,12 @@ def _seed_admin() -> None:
 
 
 if IS_ACTIVE:
-    _sensor_thread = threading.Thread(target=_sensor_monitor_loop, daemon=True)
-    _sensor_thread.start()
+    try:
+        _sensor_thread = threading.Thread(target=_sensor_monitor_loop, daemon=True)
+        _sensor_thread.start()
+    except Exception:
+        logger.exception("sensor monitor thread could not be started")
+        _sensor_thread = None
     _seed_admin()
 else:
     _sensor_thread = None
@@ -547,6 +651,35 @@ def calendar_observations(
 # --------------------------------------------------------------------------
 # Video upload (continuous upload support)
 # --------------------------------------------------------------------------
+def _save_upload(file: UploadFile, dest: Path) -> int:
+    """Stream an uploaded file to disk in bounded chunks.
+
+    Reading the whole body into RAM (the naive ``await file.read()``) lets a
+    single large upload OOM the process (unrecoverable). Streaming writes in
+    1 MiB chunks keeps memory bounded and enforces the size limit as we go.
+    """
+    limit = MAX_UPLOAD_MB * 1024 * 1024
+    size = 0
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > limit:
+                    out.close()
+                    try:
+                        dest.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise HTTPException(413, "file too large")
+                out.write(chunk)
+    except OSError as exc:
+        raise HTTPException(500, f"upload failed: {exc}")
+    return size
+
+
 @app.post("/api/videos")
 async def upload_video(file: UploadFile = File(...),
                        captured_at: Optional[str] = Form(None),
@@ -562,20 +695,16 @@ async def upload_video(file: UploadFile = File(...),
     if file.filename.lower().split(".")[-1] not in {"mp4", "avi", "mov", "mkv", "webm", "m4v"}:
         raise HTTPException(400, "unsupported video format")
 
-    content = await file.read()
-    if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
-        raise HTTPException(413, "file too large")
-
     safe_name = Path(file.filename).name
     dest = UPLOAD_DIR / safe_name
     counter = 1
     while dest.exists():
         dest = UPLOAD_DIR / f"{Path(file.filename).stem}_{counter}{dest.suffix}"
         counter += 1
-    dest.write_bytes(content)
+    size = _save_upload(file, dest)
 
     recorded_at = parse_captured_candidate(captured_at) or extract_captured_at(dest)
-    video_id = store.add_video(safe_name, str(dest), len(content), user_id=user["id"],
+    video_id = store.add_video(safe_name, str(dest), size, user_id=user["id"],
                                recorded_at=recorded_at)
     # Try to read metadata (duration etc.).
     try:
@@ -658,10 +787,10 @@ async def upload_image(file: UploadFile = File(...),
     while dest.exists():
         dest = UPLOAD_DIR / f"{Path(file.filename).stem}_{counter}{dest.suffix}"
         counter += 1
-    dest.write_bytes(content)
+    size = _save_upload(file, dest)
 
     recorded_at = parse_captured_candidate(captured_at) or extract_captured_at(dest)
-    image_id = store.add_image(safe_name, str(dest), len(content), user_id=user["id"],
+    image_id = store.add_image(safe_name, str(dest), size, user_id=user["id"],
                                recorded_at=recorded_at)
     return {"id": image_id, "filename": safe_name, "storage_path": str(dest),
             "recorded_at": recorded_at}
@@ -717,16 +846,24 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
     if not image_path.exists():
         raise HTTPException(404, "image file missing")
 
-    store.update_image(image_id, status="processing")
-    out_dir = STORAGE_DIR / f"img_{image_id}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        store.update_image(image_id, status="processing")
+        out_dir = STORAGE_DIR / f"img_{image_id}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # A DB/file error here must not leave the image permanently in a
+        # half-written state; the image row is unchanged unless analysis ran.
+        logger.exception("could not mark image %s as processing", image_id)
     source = f"image#{image_id}" + (f":{req.tree_id}" if req.tree_id else "")
     try:
         rec = get_grader().analyze_image_file(str(image_path), str(out_dir), source,
                                         drone_mode=req.drone_mode,
                                         upscale=req.upscale)
     except Exception as exc:
-        store.update_image(image_id, status="error")
+        try:
+            store.update_image(image_id, status="error")
+        except Exception:
+            logger.exception("could not mark image %s as error", image_id)
         raise HTTPException(500, f"analysis failed: {exc}")
 
     # Manually-specified tree id wins; otherwise keep the tree id that
@@ -737,26 +874,42 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
         rec["tree_id"] = None
     # Timestamp the observation at the capture time, not the analysis time.
     rec["observed_at"] = image.get("recorded_at") or image.get("created_at") or rec.get("observed_at")
-    target_dt = parse_observed_at_iso(rec.get("observed_at"))
-    soil_data = build_soil_data(req.soil_moisture.dict() if req.soil_moisture else None,
-                                target_time=target_dt)
-    integrate_soil(rec, soil_data)
-    rec["soil_source"] = soil_data.get("source", "none")
-    rec["health_state"] = health_state(rec)
-    try:
-        rec["explain_text"] = explain_detection_ja(rec)
-    except Exception:
-        rec["explain_text"] = None
-    for key in ("_frame_raw", "_frame_annotated"):
-        if rec.get(key):
-            p = Path(rec[key]).resolve()
-            try:
-                rel = p.relative_to(STORAGE_DIR.resolve())
-            except ValueError:
-                rel = Path(p.name)
-            rec[key + "_url"] = f"/storage/{rel.as_posix()}"
 
-    store.add_observation("image", rec, image_id=image_id, user_id=user["id"])
+    def _enrich(rec_: dict) -> None:
+        target_dt = parse_observed_at_iso(rec_.get("observed_at"))
+        try:
+            soil_data = build_soil_data(req.soil_moisture.dict() if req.soil_moisture else None,
+                                        target_time=target_dt)
+            integrate_soil(rec_, soil_data)
+            rec_["soil_source"] = soil_data.get("source", "none")
+        except Exception:
+            # Soil enrichment is optional; a failure must never lose the image.
+            rec_["soil_source"] = "error"
+        rec_["health_state"] = health_state(rec_)
+        try:
+            rec_["explain_text"] = explain_detection_ja(rec_)
+        except Exception:
+            rec_["explain_text"] = None
+        for key in ("_frame_raw", "_frame_annotated"):
+            if rec_.get(key):
+                p = Path(rec_[key]).resolve()
+                try:
+                    rel = p.relative_to(STORAGE_DIR.resolve())
+                except ValueError:
+                    rel = Path(p.name)
+                rec_[key + "_url"] = f"/storage/{rel.as_posix()}"
+
+    try:
+        _enrich(rec)
+        try:
+            store.add_observation("image", rec, image_id=image_id, user_id=user["id"])
+        except Exception:
+            logger.exception("could not persist image observation %s", image_id)
+    except Exception:
+        # If even post-processing broke (e.g. a corrupt result), keep the
+        # frame but still finish the image so it is not locked at "processing".
+        logger.exception("image analysis post-processing error")
+        pass
 
     # Handle comparison result (non-upscaled pass)
     comp_rec = rec.pop("_comparison", None)
@@ -767,29 +920,16 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
         elif not comp_rec.get("tree_id"):
             comp_rec["tree_id"] = None
         comp_rec["observed_at"] = rec["observed_at"]
-        target_dt2 = parse_observed_at_iso(comp_rec.get("observed_at"))
-        soil_data2 = build_soil_data(req.soil_moisture.dict() if req.soil_moisture else None,
-                                     target_time=target_dt2)
-        integrate_soil(comp_rec, soil_data2)
-        comp_rec["soil_source"] = soil_data2.get("source", "none")
-        comp_rec["health_state"] = health_state(comp_rec)
         try:
-            comp_rec["explain_text"] = explain_detection_ja(comp_rec)
+            _enrich(comp_rec) if comp_rec else None
+            store.add_observation("image", comp_rec, image_id=image_id, user_id=user["id"])
         except Exception:
-            comp_rec["explain_text"] = None
-        # Convert comparison annotated image path to URL
-        for key in ("_frame_raw", "_frame_annotated"):
-            if comp_rec.get(key):
-                p = Path(comp_rec[key]).resolve()
-                try:
-                    rel = p.relative_to(STORAGE_DIR.resolve())
-                except ValueError:
-                    rel = Path(p.name)
-                comp_rec[key + "_url"] = f"/storage/{rel.as_posix()}"
-        store.add_observation("image", comp_rec, image_id=image_id, user_id=user["id"])
-        comparison_obs = comp_rec
+            logger.exception("comparison observation skipped")
+    try:
+        store.update_image(image_id, status="done")
+    except Exception:
+        logger.exception("could not mark image %s as done", image_id)
 
-    store.update_image(image_id, status="done")
     result = {"observation": rec}
     if comparison_obs:
         result["observations"] = [rec, comparison_obs]
@@ -843,15 +983,21 @@ def soil_moisture_status():
 def sensor_alerts_status(user: dict = Depends(get_current_user)):
     """Current sensor-anomaly monitoring snapshot (evaluated state + history)."""
     from .sensor_alerts import status as _alerts_status
-    return _alerts_status(store)
+    st = _ensure_store()
+    if st is None:
+        raise HTTPException(503, "database is unavailable")
+    return _alerts_status(st)
 
 
 @app.post("/api/admin/soil-config/test-notification")
 def admin_test_notifications(_: dict = Depends(require_admin)):
     """Send a test message through every configured notification channel."""
     from .sensor_alerts import test_channels, load_alerts_config
+    st = _ensure_store()
+    if st is None:
+        raise HTTPException(503, "database is unavailable")
     return {
-        "results": test_channels(store),
+        "results": test_channels(st),
         "enabled": load_alerts_config().get("enabled", True),
     }
 
@@ -987,34 +1133,46 @@ def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
 # --------------------------------------------------------------------------
 def _finalize(rows: list[dict]) -> list[dict]:
     """Attach computed health_state, owner (farmer) info, and explain text."""
-    owners = {u["id"]: u for u in store.list_users()}
+    try:
+        owners = {u["id"]: u for u in store.list_users()}
+    except Exception:
+        owners = {}
     for o in rows:
-        result = o.get("result") or {}
-        o["health_state"] = health_state(result)
-        # Expose the upscale flags at the top level so the UI can badge them
-        # without digging into the nested result blob.
-        o["upscaled"] = result.get("upscaled")
-        o["upscale_model"] = result.get("upscale_model")
-        uid = o.get("user_id")
-        u = owners.get(uid) if uid is not None else None
-        if u:
-            o["owner"] = {k: u.get(k) for k in ("id", "username", "display_name", "farm_name")}
-        else:
-            o["owner"] = None
-        # Convert storage file paths to web URLs (/storage/...)
-        for key in ("annotated_path", "raw_frame_path"):
-            p = o.get(key)
-            if p:
-                o[key] = _url_for_storage(p)
-        # Rebuild nested frame URLs too, so stale/legacy absolute paths in
-        # older results still render correctly.
-        for key in ("_frame_annotated", "_frame_raw"):
-            p = result.get(key)
-            if p:
-                result[key + "_url"] = _url_for_storage(p)
+        # One malformed observation must never break the whole list response.
         try:
-            o["explain_text"] = explain_detection_ja(result)
+            result = o.get("result") or {}
+            try:
+                o["health_state"] = health_state(result)
+            except Exception:
+                o["health_state"] = None
+            # Expose the upscale flags at the top level so the UI can badge them
+            # without digging into the nested result blob.
+            o["upscaled"] = result.get("upscaled")
+            o["upscale_model"] = result.get("upscale_model")
+            uid = o.get("user_id")
+            u = owners.get(uid) if uid is not None else None
+            if u:
+                o["owner"] = {k: u.get(k) for k in ("id", "username", "display_name", "farm_name")}
+            else:
+                o["owner"] = None
+            # Convert storage file paths to web URLs (/storage/...)
+            for key in ("annotated_path", "raw_frame_path"):
+                p = o.get(key)
+                if p:
+                    o[key] = _url_for_storage(p)
+            # Rebuild nested frame URLs too, so stale/legacy absolute paths in
+            # older results still render correctly.
+            for key in ("_frame_annotated", "_frame_raw"):
+                p = result.get(key)
+                if p:
+                    result[key + "_url"] = _url_for_storage(p)
+            try:
+                o["explain_text"] = explain_detection_ja(result)
+            except Exception:
+                o["explain_text"] = None
         except Exception:
+            o["health_state"] = None
+            o["owner"] = None
             o["explain_text"] = None
     return rows
 
@@ -1703,10 +1861,11 @@ def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_a
     new_ch = ((cfg.get("alerts") or {}).get("channels") or {})
     old_ch = ((existing.get("alerts") or {}).get("channels") or {})
     _restore_channel_secrets(_mask_alerts_secret, old_ch, new_ch)
-    SOIL_MOISTURE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SOIL_MOISTURE_CONFIG_PATH.write_text(
+    from .config import atomic_write as _atomic_write_text
+    _atomic_write_text(
+        SOIL_MOISTURE_CONFIG_PATH,
         yaml.safe_dump(cfg, allow_unicode=True, default_flow_style=False),
-        encoding="utf-8")
+    )
     return _soil_doc()
 
 

@@ -23,6 +23,54 @@ def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def _json_default(value) -> object:
+    """JSON encoder fallback that never raises on numpy/Python scalars.
+
+    The detection pipeline produces numpy scalars (np.float32, np.int64, ...)
+    that are not ``np.ndarray`` and so survive the analyzer's filter; without
+    this, ``json.dumps`` raises TypeError and aborts the whole video job.
+    """
+    import numpy as np
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    if isinstance(value, (set, frozenset)):
+        return sorted(value)
+    return str(value)
+
+
+def _json_dumps(obj) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False)
+    except (TypeError, ValueError):
+        try:
+            return json.dumps(obj, ensure_ascii=False, default=_json_default)
+        except Exception:
+            return json.dumps({"serialization_error": True})
+
+
+def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write a text file atomically (temp file + os.replace).
+
+    A crash or power loss mid-write must never leave a truncated
+    config/settings file, which the lenient loaders would silently accept.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding=encoding)
+    try:
+        import os
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _rmtree_retry(path: Path, attempts: int = 3, delay: float = 0.3) -> None:
     """Remove a directory tree, retrying on transient OSError (e.g. Windows locks)."""
     for i in range(attempts):
@@ -74,8 +122,14 @@ class Store:
         else:
             con = sqlite3.connect(str(self.path), timeout=30)
         con.row_factory = sqlite3.Row
-        if self.read_only:
-            con.execute("PRAGMA query_only=ON")
+        try:
+            # Reduce "database is locked" OperationalErrors under concurrent
+            # writers (runner + request handlers + sensor monitor thread).
+            con.execute("PRAGMA busy_timeout=30000")
+            if self.read_only:
+                con.execute("PRAGMA query_only=ON")
+        except sqlite3.Error:
+            pass
         return con
 
     def _init_schema(self):
@@ -709,7 +763,7 @@ class Store:
                         rec.get("water_stress"),
                         rec.get("leaf_curl_index"),
                         rec.get("wrinkled_fruit_count"),
-                        json.dumps(rec, ensure_ascii=False),
+                        json.dumps(rec, ensure_ascii=False, default=_json_default),
                         rec.get("_frame_annotated"),
                         rec.get("_frame_raw"),
                     ),

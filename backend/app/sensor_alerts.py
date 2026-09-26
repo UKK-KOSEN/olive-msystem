@@ -155,15 +155,40 @@ def _deep_merge(base: dict, update: dict) -> None:
             base[key] = value
 
 
+def _cfg_float(acfg: dict, key: str, default: float) -> float:
+    """Return a numeric config value, never raising on bad input.
+
+    soil_moisture.yaml is admin-editable; one non-numeric threshold would
+    otherwise permanently disable alert evaluation (F66).
+    """
+    try:
+        return float(acfg.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _cfg_float_list(acfg: dict, key: str) -> list[float]:
+    """Return a list of numeric config values, dropping invalid entries."""
+    out = []
+    value = acfg.get(key)
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            try:
+                out.append(float(item))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def _load_alerts_raw() -> dict:
     raw = {}
-    if SOIL_MOISTURE_CONFIG_PATH.exists():
-        try:
+    try:
+        if SOIL_MOISTURE_CONFIG_PATH.exists():
             cfg = yaml.safe_load(SOIL_MOISTURE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
             if isinstance(cfg, dict):
                 raw = cfg.get("alerts") or {}
-        except Exception:
-            raw = {}
+    except Exception:
+        raw = {}
     return raw if isinstance(raw, dict) else {}
 
 
@@ -330,7 +355,7 @@ def evaluate() -> dict:
             **ctx,
         }
 
-    stale_hours = float(acfg.get("stale_hours", 6))
+    stale_hours = _cfg_float(acfg, "stale_hours", 6)
     if age_hours is not None and age_hours > stale_hours:
         return {
             **base,
@@ -347,8 +372,8 @@ def evaluate() -> dict:
             **ctx,
         }
 
-    dry = float(acfg.get("dry_percent", 15))
-    wet = float(acfg.get("wet_percent", 85))
+    dry = _cfg_float(acfg, "dry_percent", 15)
+    wet = _cfg_float(acfg, "wet_percent", 85)
     hints = []
     for tag, val in (("センサー1", s1), ("センサー2", s2)):
         if val is None:
@@ -432,9 +457,9 @@ def _render(text: Optional[str], ctx: dict) -> str:
 def _template_context(ev: dict, acfg: dict, dry: Optional[float] = None, wet: Optional[float] = None) -> dict:
     """Flatten an evaluate() snapshot + config thresholds for template use."""
     if dry is None:
-        dry = float(acfg.get("dry_percent", 15))
+        dry = _cfg_float(acfg, "dry_percent", 15)
     if wet is None:
-        wet = float(acfg.get("wet_percent", 85))
+        wet = _cfg_float(acfg, "wet_percent", 85)
     ctx = dict(ev or {})
     ctx["bar1"] = _bar(ctx.get("sensor1"), dry, wet)
     ctx["bar2"] = _bar(ctx.get("sensor2"), dry, wet)
@@ -569,7 +594,10 @@ def _send_one_webhook(entry: dict, title: str, body: str, severity: str, tctx: O
     fmt = (entry.get("format") or "json").lower()
     if fmt == "json" and "discord.com/api/webhooks/" in url:
         fmt = "discord"
-    timeout = float(entry.get("timeout") or 10)
+    try:
+        timeout = float(entry.get("timeout") or 10)
+    except (TypeError, ValueError):
+        timeout = 10.0
     text = f"[{severity}] {title}\n{body}"
     token = (entry.get("token") or "").strip()
     headers = {str(k): str(v) for k, v in (entry.get("headers") or {}).items()}
@@ -734,8 +762,9 @@ def run_monitor(store) -> dict:
             # configured threshold is re-announced once as critical.
             esc = acfg.get("escalation") or {}
             esc_h = esc.get(ev["mode"])
-            if (esc_h and not _state_escalated(state)
-                    and elapsed_h is not None and elapsed_h >= float(esc_h)):
+            if (esc_h is not None and not _state_escalated(state)
+                    and elapsed_h is not None
+                    and elapsed_h >= _cfg_float(acfg, f"escalation.{ev['mode']}", float(esc_h))):
                 esc_title = f"【重要度昇格】{ev['title']}"
                 esc_body = (
                     f"{ev['body']}\n"
@@ -751,7 +780,7 @@ def run_monitor(store) -> dict:
                                ev["mode"], elapsed_h, used or "none")
                 return {"action": "escalated", "mode": ev["mode"], "channels": results}
             # Otherwise fire the next scheduled reminder if due.
-            schedule = [float(x) for x in (acfg.get("remind_hours") or [])]
+            schedule = _cfg_float_list(acfg, "remind_hours")
             if elapsed_h is not None and 0 <= level < len(schedule) and elapsed_h >= schedule[level]:
                 n = level + 1
                 title = f"（リマインド {n}）{ev['title']}"

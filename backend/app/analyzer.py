@@ -214,16 +214,27 @@ class OliveAnalyzer:
                 label = _format_ts(t)
                 if progress_cb:
                     progress_cb(idx - 1, total, label)  # before this frame
-                frame = processor.get_frame_at_time(t)
-                if frame is None:
+                # Frame extraction and file writes are per-frame isolated so a
+                # single corrupt frame can never abort the whole video job.
+                try:
+                    frame = processor.get_frame_at_time(t)
+                    if frame is None:
+                        results.append({
+                            "ok": False, "timestamp": t, "error": "out of range",
+                        })
+                        if progress_cb:
+                            progress_cb(idx, total, label)
+                        continue
+                    raw_path = out / f"frame_{label}.jpg"
+                    _imwrite(raw_path, frame)
+                except Exception as exc:  # pragma: no cover
                     results.append({
-                        "ok": False, "timestamp": t, "error": "out of range",
+                        "ok": False, "timestamp": t, "label": label,
+                        "error": f"{type(exc).__name__}: {exc}",
                     })
                     if progress_cb:
                         progress_cb(idx, total, label)
                     continue
-                raw_path = out / f"frame_{label}.jpg"
-                _imwrite(raw_path, frame)
                 try:
                     result, annotated = self.analyze_image(
                         frame, f"{source}@{label}", drone_mode=drone_mode,
@@ -239,7 +250,10 @@ class OliveAnalyzer:
                 if progress_cb:
                     progress_cb(idx, total, label)  # after this frame
                 annotated_path = out / f"annotated_{label}.jpg"
-                _imwrite(annotated_path, annotated)
+                try:
+                    _imwrite(annotated_path, annotated)
+                except Exception:  # pragma: no cover
+                    pass
                 # Build a JSON-serialisable record.
                 rec = {k: v for k, v in result.items() if not isinstance(v, np.ndarray)}
                 rec["_frame_raw"] = str(raw_path)
@@ -254,9 +268,14 @@ class OliveAnalyzer:
         return results
 
 
-def _imwrite(path, image) -> None:
-    import cv2
-    cv2.imwrite(str(path), image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+def _imwrite(path, image) -> bool:
+    """Write a JPEG frame; never raises on a write failure (returns success)."""
+    try:
+        import cv2
+        ok = cv2.imwrite(str(path), image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        return bool(ok)
+    except Exception:
+        return False
 
 
 def _format_ts(seconds: float) -> str:
