@@ -80,7 +80,7 @@ olive-msystem/
 
 ## Getting Started（クイックスタート）
 
-1. **初回セットアップ**: `start.bat` を実行すると、Python仮想環境とnpmパッケージが自動インストールされます。続けて `cd frontend && npm run build` を実行してください（`start.bat` のフロントエンドは `next start` を使用します）。
+1. **起動**: `start.bat` を実行するだけで、Python仮想環境・npmパッケージのインストール、フロントエンドのビルド（`.next` が無い場合）、検出エンジン（olive-p / upscaler / ffmpeg）の確認をすべて自動で行い、バックエンドとフロントエンドの watchdog を起動します。
 2. **アクセス**: ブラウザで http://localhost:3001 を開いてください。
 3. **ログイン**: 管理者は初回起動時にランダムな10桁数字パスワードで作成されます（ログ確認 or `ADMIN_PASSWORD` 環境変数で固定）。
 
