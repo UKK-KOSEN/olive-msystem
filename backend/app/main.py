@@ -27,6 +27,7 @@ from .config import (CORS_ORIGINS, DATA_DIR, DB_PATH, HOST, INSTANCE_ID,
                      ROOT, SETTINGS_PATH, SOIL_MOISTURE_CONFIG_PATH,
                      STORAGE_DIR, UPLOAD_DIR, ensure_dirs,
                      load_settings, save_settings)
+from .errors import app_error, error_body
 from .health import HEALTH_LABELS, health_state, aggregate_health_state
 from .models import (AnalyseImageRequest, AnalyseTimesRequest,
                      AnalyseTimesTextRequest, SoilMoistureInput,
@@ -202,7 +203,7 @@ def health_ready():
     """Readiness probe: return 503 until the active instance can use its DB."""
     payload = health()
     if not payload["ready"]:
-        raise HTTPException(status_code=503, detail="backend is not ready")
+        raise app_error(503, "UNAVAILABLE_NOT_READY", "backend is not ready")
     return payload
 
 
@@ -304,7 +305,8 @@ async def unhandled_exception_handler(request, exc: Exception):
     logger.error("unhandled error on %s: %s", request.url.path, traceback.format_exc())
     return JSONResponse(
         status_code=500,
-        content={"detail": "サーバー内部でエラーが発生しました"},
+        content={"detail": "サーバー内部でエラーが発生しました",
+                 "code": "SERVER_INTERNAL"},
     )
 
 
@@ -317,14 +319,15 @@ async def validation_exception_handler(request, exc: RequestValidationError):
         lines.append(f"{loc}: {e.get('msg')}" if loc else str(e.get("msg")))
     logger.warning("validation error on %s: %s", request.url.path, "; ".join(lines) or exc)
     msg = lines[0] if lines else "入力値が正しくありません"
-    return JSONResponse(status_code=422, content={"detail": msg})
+    return JSONResponse(status_code=422,
+                        content={"detail": msg, "code": "VALIDATION_ERROR"})
 
 
 @app.exception_handler(StarletteHTTPException)
 async def starlette_http_exception_handler(request, exc: StarletteHTTPException):
     if exc.status_code >= 500:
         logger.error("http %s error on %s: %s", exc.status_code, request.url.path, exc.detail)
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return JSONResponse(status_code=exc.status_code, content={**error_body(exc)})
 
 
 @app.get("/api/versions")
@@ -481,7 +484,7 @@ def register(req: RegisterRequest):
         farm_name=(req.farm_name or "").strip() or None,
     )
     if user is None:
-        raise HTTPException(409, "このユーザー名は既に使われています")
+        raise app_error(409, "AUTH_USERNAME_TAKEN", "このユーザー名は既に使われています")
     token = store.create_session(user["id"])
     return {"token": token, "user": user}
 
@@ -490,9 +493,9 @@ def register(req: RegisterRequest):
 def login(req: LoginRequest):
     user = store.get_user_by_username(req.username.strip())
     if user is None or not verify_password(req.password, user["password_hash"]):
-        raise HTTPException(401, "ユーザー名またはパスワードが正しくありません")
+        raise app_error(401, "AUTH_BAD_CREDENTIALS", "ユーザー名またはパスワードが正しくありません")
     if not user.get("is_active"):
-        raise HTTPException(403, "このアカウントは無効です")
+        raise app_error(403, "AUTH_ACCOUNT_DISABLED", "このアカウントは無効です")
     token = store.create_session(user["id"])
     public_user = {k: user.get(k) for k in (
         "id", "username", "role", "display_name", "farm_name",
@@ -537,12 +540,12 @@ def update_profile(req: dict, user: dict = Depends(get_current_user)):
                 if fields["farm_trees"] < 0:
                     raise ValueError
             except (TypeError, ValueError):
-                raise HTTPException(400, "farm_trees must be a non-negative integer")
+                raise app_error(400, "VALIDATION_FARM_TREES", "farm_trees must be a non-negative integer")
     if fields:
         store.update_user(user["id"], **fields)
     if req.get("password"):
         if len(str(req["password"])) < 6:
-            raise HTTPException(400, "password must be at least 6 characters")
+            raise app_error(400, "VALIDATION_PASSWORD", "password must be at least 6 characters")
         store.set_user_password(user["id"], str(req["password"]))
     # Handle preferences
     if "preferences" in req and isinstance(req["preferences"], dict):
@@ -673,10 +676,10 @@ def _save_upload(file: UploadFile, dest: Path) -> int:
                         dest.unlink(missing_ok=True)
                     except OSError:
                         pass
-                    raise HTTPException(413, "file too large")
+                    raise app_error(413, "LIMIT_UPLOAD_TOO_LARGE", "file too large")
                 out.write(chunk)
     except OSError as exc:
-        raise HTTPException(500, f"upload failed: {exc}")
+        raise app_error(500, "SERVER_UPLOAD_WRITE", f"upload failed: {exc}")
     return size
 
 
@@ -691,9 +694,9 @@ async def upload_video(file: UploadFile = File(...),
     timestamp instead of the analysis time.
     """
     if not file.filename:
-        raise HTTPException(400, "no filename")
+        raise app_error(400, "VALIDATION_NO_FILENAME", "no filename")
     if file.filename.lower().split(".")[-1] not in {"mp4", "avi", "mov", "mkv", "webm", "m4v"}:
-        raise HTTPException(400, "unsupported video format")
+        raise app_error(400, "VALIDATION_UNSUPPORTED_VIDEO", "unsupported video format")
 
     safe_name = Path(file.filename).name
     dest = UPLOAD_DIR / safe_name
@@ -772,14 +775,14 @@ async def upload_image(file: UploadFile = File(...),
     the observation timestamp.
     """
     if not file.filename:
-        raise HTTPException(400, "no filename")
+        raise app_error(400, "VALIDATION_NO_FILENAME", "no filename")
     ext = file.filename.lower().rsplit(".", 1)[-1] if "." in file.filename else ""
     if ext not in {"jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp"}:
-        raise HTTPException(400, "unsupported image format")
+        raise app_error(400, "VALIDATION_UNSUPPORTED_IMAGE", "unsupported image format")
 
     content = await file.read()
     if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
-        raise HTTPException(413, "file too large")
+        raise app_error(413, "LIMIT_UPLOAD_TOO_LARGE", "file too large")
 
     safe_name = Path(file.filename).name
     dest = UPLOAD_DIR / safe_name
@@ -806,9 +809,9 @@ def _owned_image(image_id: int, user: dict) -> dict:
     """Return the image if the current user may access it."""
     image = store.get_image(image_id)
     if image is None:
-        raise HTTPException(404, "image not found")
+        raise app_error(404, "NOT_FOUND_IMAGE", "image not found")
     if user["role"] != "admin" and image.get("user_id") != user["id"]:
-        raise HTTPException(403, "この画像にはアクセスできません")
+        raise app_error(403, "AUTH_FORBIDDEN", "この画像にはアクセスできません")
     return image
 
 
@@ -816,9 +819,9 @@ def _owned_video(video_id: int, user: dict) -> dict:
     """Return the video if the current user may access it."""
     video = store.get_video(video_id)
     if video is None:
-        raise HTTPException(404, "video not found")
+        raise app_error(404, "NOT_FOUND_VIDEO", "video not found")
     if user["role"] != "admin" and video.get("user_id") != user["id"]:
-        raise HTTPException(403, "この動画にはアクセスできません")
+        raise app_error(403, "AUTH_FORBIDDEN", "この動画にはアクセスできません")
     return video
 
 
@@ -844,7 +847,7 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
     image = _owned_image(image_id, user)
     image_path = Path(image["storage_path"])
     if not image_path.exists():
-        raise HTTPException(404, "image file missing")
+        raise app_error(404, "NOT_FOUND_IMAGE_FILE", "image file missing")
 
     try:
         store.update_image(image_id, status="processing")
@@ -864,7 +867,7 @@ def analyse_image(image_id: int, req: AnalyseImageRequest, user: dict = Depends(
             store.update_image(image_id, status="error")
         except Exception:
             logger.exception("could not mark image %s as error", image_id)
-        raise HTTPException(500, f"analysis failed: {exc}")
+        raise app_error(500, "SERVER_ANALYSIS_FAILED", f"analysis failed: {exc}")
 
     # Manually-specified tree id wins; otherwise keep the tree id that
     # olive-p recognised from a QR code in the image.
@@ -985,7 +988,7 @@ def sensor_alerts_status(user: dict = Depends(get_current_user)):
     from .sensor_alerts import status as _alerts_status
     st = _ensure_store()
     if st is None:
-        raise HTTPException(503, "database is unavailable")
+        raise app_error(503, "UNAVAILABLE_DATABASE", "database is unavailable")
     return _alerts_status(st)
 
 
@@ -995,7 +998,7 @@ def admin_test_notifications(_: dict = Depends(require_admin)):
     from .sensor_alerts import test_channels, load_alerts_config
     st = _ensure_store()
     if st is None:
-        raise HTTPException(503, "database is unavailable")
+        raise app_error(503, "UNAVAILABLE_DATABASE", "database is unavailable")
     return {
         "results": test_channels(st),
         "enabled": load_alerts_config().get("enabled", True),
@@ -1104,7 +1107,7 @@ def analyse_video_text(video_id: int, req: AnalyseTimesTextRequest, user: dict =
     try:
         times = [parse_time(t) for t in req.times]
     except ValueError as exc:
-        raise HTTPException(400, str(exc))
+        raise app_error(400, "VALIDATION_TIME_PARSE", str(exc))
     return _enqueue(video_id, times, req.tree_id, req.soil_moisture, user,
                     drone_mode=req.drone_mode, upscale=req.upscale)
 
@@ -1115,13 +1118,13 @@ def _enqueue(video_id: int, times: list[float], tree_id: Optional[str],
              drone_mode: bool = False,
              upscale: Optional[bool] = None):
     if runner is None:
-        raise HTTPException(503, "active backend is not available")
+        raise app_error(503, "UNAVAILABLE_BACKEND", "active backend is not available")
     _owned_video(video_id, user)
     video = store.get_video(video_id)
     if video["status"] == "processing":
-        raise HTTPException(409, "video is already being analysed")
+        raise app_error(409, "CONFLICT_VIDEO_ANALYZING", "video is already being analysed")
     if not times:
-        raise HTTPException(400, "no times given")
+        raise app_error(400, "VALIDATION_NO_TIMES", "no times given")
     job = runner.enqueue(video_id, sorted(set(round(t, 3) for t in times)), tree_id,
                          soil_manual=soil_moisture.dict() if soil_moisture else None,
                          drone_mode=drone_mode, upscale=upscale)
@@ -1238,7 +1241,7 @@ def list_tree_registry(farmer_id: Optional[int] = Query(None),
     else:
         uid = user["id"]
     if uid is None:
-        raise HTTPException(400, "farmer_id を指定してください")
+        raise app_error(400, "VALIDATION_FARMER_REQUIRED", "farmer_id を指定してください")
     rows = _with_tree_health(store.list_trees_registry(uid))
     return {"trees": rows}
 
@@ -1252,7 +1255,7 @@ def create_tree_registry(payload: TreeCreate,
         row = store.create_tree(uid, payload.tree_id, payload.name, payload.variety,
                                 payload.row_num, payload.col_num, payload.note)
     except ValueError as e:
-        raise HTTPException(409, str(e))
+        raise app_error(409, "CONFLICT_TREE_ID", str(e))
     return _with_tree_health([row])[0]
 
 
@@ -1264,7 +1267,7 @@ def update_tree_registry(tree_id: str, payload: TreeUpdate,
     row = store.update_tree(uid, tree_id, payload.name, payload.variety,
                             payload.row_num, payload.col_num, payload.note)
     if row is None:
-        raise HTTPException(404, "樹木が見つかりません")
+        raise app_error(404, "NOT_FOUND_TREE", "樹木が見つかりません")
     return _with_tree_health([row])[0]
 
 
@@ -1273,7 +1276,7 @@ def delete_tree_registry(tree_id: str, farmer_id: Optional[int] = Query(None),
                          user: dict = Depends(get_current_user)):
     uid = _target_id(user, farmer_id)
     if not store.delete_tree(uid, tree_id):
-        raise HTTPException(404, "樹木が見つかりません")
+        raise app_error(404, "NOT_FOUND_TREE", "樹木が見つかりません")
     return {"ok": True}
 
 
@@ -1489,7 +1492,7 @@ def delete_observations(ids: list[int] = Body(..., embed=True),
     deleted = 0
     not_found = 0
     if len(ids) > 500:
-        raise HTTPException(400, "too many observations (max 500)")
+        raise app_error(400, "VALIDATION_OBSERVATIONS_LIMIT", "too many observations (max 500)")
     for oid in ids:
         if store.delete_observation_owned(oid, uid):
             deleted += 1
@@ -1562,7 +1565,7 @@ def delete_own_video(video_id: int, user: dict = Depends(get_current_user)):
     _owned_video(video_id, user)
     path = store.delete_video(video_id)
     if path is None:
-        raise HTTPException(404, "video not found")
+        raise app_error(404, "NOT_FOUND_VIDEO", "video not found")
     _unlink_upload(path)
     return {"ok": True, "deleted_video": video_id}
 
@@ -1573,7 +1576,7 @@ def delete_own_image(image_id: int, user: dict = Depends(get_current_user)):
     _owned_image(image_id, user)
     path = store.delete_image(image_id)
     if path is None:
-        raise HTTPException(404, "image not found")
+        raise app_error(404, "NOT_FOUND_IMAGE", "image not found")
     _unlink_upload(path)
     return {"ok": True, "deleted_image": image_id}
 
@@ -1584,7 +1587,7 @@ def delete_own_observation(observation_id: int, user: dict = Depends(get_current
     uid = _scope_id(user)
     ok = store.delete_observation_owned(observation_id, uid)
     if not ok:
-        raise HTTPException(404, "observation not found")
+        raise app_error(404, "NOT_FOUND_OBSERVATION", "observation not found")
     return {"ok": True}
 
 
@@ -1603,10 +1606,10 @@ def _target_id(user: dict, farmer_id: Optional[int]) -> int:
     """
     if user["role"] == "admin":
         if farmer_id is None:
-            raise HTTPException(400, "farmer_id を指定してください")
+            raise app_error(400, "VALIDATION_FARMER_REQUIRED", "farmer_id を指定してください")
         u = store.get_user(farmer_id)
         if not u or u["role"] != "farmer":
-            raise HTTPException(404, "農家が存在しません")
+            raise app_error(404, "NOT_FOUND_FARMER", "農家が存在しません")
         return farmer_id
     return user["id"]
 
@@ -1618,7 +1621,7 @@ def _target_id(user: dict, farmer_id: Optional[int]) -> int:
 def storage_file(folder: str, file_name: str):
     path = (STORAGE_DIR / folder / file_name).resolve()
     if not path.is_relative_to(STORAGE_DIR.resolve()) or not path.is_file():
-        raise HTTPException(404, "file not found")
+        raise app_error(404, "NOT_FOUND_STORAGE_FILE", "file not found")
     return FileResponse(path)
 
 
@@ -1627,7 +1630,7 @@ def media_file(file_name: str):
     """Serve uploaded video files (browser <video> streaming, Range enabled)."""
     path = (UPLOAD_DIR / file_name).resolve()
     if not path.is_relative_to(UPLOAD_DIR.resolve()) or not path.is_file():
-        raise HTTPException(404, "file not found")
+        raise app_error(404, "NOT_FOUND_STORAGE_FILE", "file not found")
     return FileResponse(path)
 
 
@@ -1873,7 +1876,7 @@ def admin_put_soil_config(payload: dict = Body(...), _: dict = Depends(require_a
 def admin_delete_video(video_id: int, _: dict = Depends(require_admin)):
     path = store.delete_video(video_id)
     if path is None:
-        raise HTTPException(404, "video not found")
+        raise app_error(404, "NOT_FOUND_VIDEO", "video not found")
     _unlink_upload(path)
     return {"ok": True, "deleted_video": video_id}
 
@@ -1882,7 +1885,7 @@ def admin_delete_video(video_id: int, _: dict = Depends(require_admin)):
 def admin_delete_image(image_id: int, _: dict = Depends(require_admin)):
     path = store.delete_image(image_id)
     if path is None:
-        raise HTTPException(404, "image not found")
+        raise app_error(404, "NOT_FOUND_IMAGE", "image not found")
     _unlink_upload(path)
     return {"ok": True, "deleted_image": image_id}
 
@@ -1891,7 +1894,7 @@ def admin_delete_image(image_id: int, _: dict = Depends(require_admin)):
 def admin_delete_observation(observation_id: int, _: dict = Depends(require_admin)):
     ok = store.delete_observation(observation_id)
     if not ok:
-        raise HTTPException(404, "observation not found")
+        raise app_error(404, "NOT_FOUND_OBSERVATION", "observation not found")
     return {"ok": True}
 
 
@@ -1912,7 +1915,7 @@ def create_notification(req: dict, user: dict = Depends(require_admin)):
     target_role = req.get("target_role", "all")
     target_user_id = req.get("target_user_id")
     if not title or not body:
-        raise HTTPException(400, "title and body are required")
+        raise app_error(400, "VALIDATION_CONTENT_REQUIRED", "title and body are required")
     nid = store.add_notification(title, body, user["id"], target_role, target_user_id)
     return {"id": nid, "ok": True}
 
@@ -1983,7 +1986,7 @@ def admin_update_farmer(user_id: int, req: FarmerUpdateRequest,
                         _: dict = Depends(require_admin)):
     user = store.get_user(user_id)
     if user is None or user["role"] != "farmer":
-        raise HTTPException(404, "農家が見つかりません")
+        raise app_error(404, "NOT_FOUND_FARMER", "農家が見つかりません")
     changes = {}
     if req.display_name is not None:
         changes["display_name"] = req.display_name.strip()
@@ -1995,7 +1998,7 @@ def admin_update_farmer(user_id: int, req: FarmerUpdateRequest,
             changes[key] = str(val).strip()
     if req.farm_trees is not None:
         if req.farm_trees < 0:
-            raise HTTPException(400, "farm_trees must be a non-negative integer")
+            raise app_error(400, "VALIDATION_FARM_TREES", "farm_trees must be a non-negative integer")
         changes["farm_trees"] = req.farm_trees
     if req.is_active is not None:
         changes["is_active"] = 1 if req.is_active else 0
@@ -2008,7 +2011,7 @@ def admin_reset_farmer_password(user_id: int, req: PasswordResetRequest,
                                 _: dict = Depends(require_admin)):
     user = store.get_user(user_id)
     if user is None or user["role"] != "farmer":
-        raise HTTPException(404, "農家が見つかりません")
+        raise app_error(404, "NOT_FOUND_FARMER", "農家が見つかりません")
     store.set_user_password(user_id, req.new_password)
     return {"ok": True, "username": user["username"]}
 
@@ -2017,7 +2020,7 @@ def admin_reset_farmer_password(user_id: int, req: PasswordResetRequest,
 def admin_delete_farmer(user_id: int, _: dict = Depends(require_admin)):
     user = store.get_user(user_id)
     if user is None or user["role"] != "farmer":
-        raise HTTPException(404, "農家が見つかりません")
+        raise app_error(404, "NOT_FOUND_FARMER", "農家が見つかりません")
     removed = store.delete_user(user_id)
     return {"ok": True, "removed": removed}
 

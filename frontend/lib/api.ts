@@ -392,11 +392,13 @@ export function getAuthToken() {
 export class ApiError extends Error {
   readonly status: number;
   readonly retryable: boolean;
-  constructor(message: string, status: number, retryable = false) {
+  readonly code: string | null;
+  constructor(message: string, status: number, retryable = false, code: string | null = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.retryable = retryable;
+    this.code = code;
   }
 }
 
@@ -487,19 +489,26 @@ function describeError(j: any, status: number): string {
   return `サーバーエラーが発生しました（HTTP ${status}）`;
 }
 
+function extractErrorCode(j: any): string | null {
+  if (j && typeof j.code === 'string' && j.code) return j.code;
+  return null;
+}
+
 async function handle(res: Response) {
   if (res.status === 401) {
     throw new UnauthorizedError();
   }
   if (!res.ok) {
     let msg = `サーバーエラーが発生しました（HTTP ${res.status}）`;
+    let code: string | null = null;
     try {
       const j = await res.json();
       msg = describeError(j, res.status);
+      code = extractErrorCode(j);
     } catch {
       if (res.statusText) msg = res.statusText;
     }
-    throw new ApiError(msg, res.status, isRetryableStatus(res.status));
+    throw new ApiError(msg, res.status, isRetryableStatus(res.status), code);
   }
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
