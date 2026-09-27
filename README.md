@@ -24,6 +24,9 @@
 | センサー異常監視・通知 | データ停止・水分値異常・API接続エラーを検知し、アプリ内＋Webhook/LINE で通知 |
 | アクティブ/スタンバイ冗長運用 | バックエンドを主・待機の2プロセスで起動し、主系障害時に主ポートで後継activeを起動 |
 | 農家アカウント | 農家は自分のデータのみ閲覧。管理者は全農家のデータ・アカウントを管理 |
+| 永不停止化（バックエンド） | DB・解析エンジンの一時障害でdegraded起動＋自動復旧。解析キューは永不停止ループ、解析フレーム単位の失敗分離、アップロードはチャンク書込（OOM対策）、SQLite busy_timeout |
+| エラー耐性化（フロントエンド） | ルート/ページ毎のエラーバウンダリ、非JSONレスポンス拒否（白画面化防止）、SDK的なAPIクライアントによる冪等なエラーハンドリング、watchdogの指数的バックオフ＋クラッシュループ検知 |
+| APIエラーコード | 全APIレスポンスに機械判別可能な `code`（AUTH_* / VALIDATION_* / NOT_FOUND_* / CONFLICT_* / LIMIT_* / SERVER_* / UNAVAILABLE_*）を付与。フロントは `ApiError.code` で判別可能 |
 
 ## 構成
 
@@ -33,6 +36,7 @@ olive-msystem/
 │   ├── app/
 │   │   ├── main.py            # FastAPI ルート・APIエンドポイント
 │   │   ├── analyzer.py        # olive-p の Analyzer / VideoProcessor をラップ
+│   │   ├── errors.py          # 機械判別可能なAPIエラーコード（ERROR_CODES）
 │   │   ├── translate_report.py# 解析レポートの日本語訳（テンプレート翻訳）
 │   │   ├── health.py          # 体調スコア → キャラクター状態のマッピング
 │   │   ├── runner.py          # 連続アップロード・解析のバックグラウンドキュー
@@ -56,6 +60,7 @@ olive-msystem/
     │   ├── (admin)/     # 管理者向けページ（/admin）
     │   ├── forbidden/   # 403 アクセス禁止ページ
     │   ├── login/       # ログイン・農家登録
+    │   ├── global-error.tsx # ルートエラーバウンダリ（予期せぬ例外時の白画面防止）
     │   └── layout.tsx   # ルートレイアウト
     └── components/      # 共通コンポーネント（新規追加はここ）
 ```
@@ -66,6 +71,23 @@ olive-msystem/
 - フロントの `/api` `/storage` `/media` は `next.config.mjs` の rewrites で
   FastAPI（既定値 `127.0.0.1:8000`、`BACKEND_URL` で変更可）へプロキシ。
 - `/versions`（旧ページ）は `/algorithm` へ恒久リダイレクト。
+
+## エラーコード
+
+すべてのAPIエラーは、人間向け `detail`（従来どおり）に加えて
+**機械判別可能な `code`** をJSONボディで返します（`backend/app/errors.py` の `ERROR_CODES`）。
+
+| 分類 | コード例 | 状態 |
+|------|---------|------|
+| 認証・認可 | `AUTH_REQUIRED` / `AUTH_BAD_CREDENTIALS` / `AUTH_FORBIDDEN` / `AUTH_USERNAME_TAKEN` / `AUTH_ACCOUNT_DISABLED` | 401 / 403 |
+| 入力検証 | `VALIDATION_PASSWORD` / `VALIDATION_FARM_TREES` / `VALIDATION_UNSUPPORTED_VIDEO` / `VALIDATION_NO_TIMES` / `VALIDATION_OBSERVATIONS_LIMIT` 等 | 400 / 422 |
+| 存在しない | `NOT_FOUND_VIDEO` / `NOT_FOUND_IMAGE` / `NOT_FOUND_OBSERVATION` / `NOT_FOUND_TREE` / `NOT_FOUND_FARMER` 等 | 404 |
+| 競合・状態 | `CONFLICT_VIDEO_ANALYZING`（解析中） / `CONFLICT_TREE_ID`（重複ID） | 409 |
+| 上限超過 | `LIMIT_UPLOAD_TOO_LARGE` | 413 |
+| サーバー / 利用不可 | `SERVER_INTERNAL` / `SERVER_UPLOAD_WRITE` / `UNAVAILABLE_DATABASE` / `UNAVAILABLE_BACKEND` | 500 / 503 |
+
+- フロントエンドは `ApiError.code` で受け取り、`detail` ベースの既存処理もそのまま維持。
+- エラーハンドリングは従来どおり（重複しない追加方式）。コードは公開後に変更しないこと（外部連携が依存しうる）。
 
 ## 体調の判定
 
@@ -124,6 +146,9 @@ ops\redundant-start.bat
 | `BACKEND_PORT` | `8000` | バックエンドのポート |
 | `FRONTEND_PORT` | `3001` | フロントエンドのポート |
 | `BACKEND_URL` | `http://127.0.0.1:8000` | Next.js の API プロキシ先（`next.config.mjs` rewrites） |
+| `MAX_UPLOAD_MB` | `2048` | アップロード1ファイルの容量上限（MB）。超過は `413 LIMIT_UPLOAD_TOO_LARGE` |
+| `WORKERS` | `2` | 解析キュー（runner）の並列ワーカー数 |
+| `OLIVE_P_DIR` | （環境依存） | olive-p 解析エンジンのパス（既定は `backend/app/config.py` 参照） |
 | `ADMIN_PASSWORD` | （ランダム10桁） | 管理者パスワードの固定（未設定時は初回起動時にランダム生成） |
 | `OLIVE_INSTANCE_ID` | `standalone` | 冗長構成でのプロセス識別子（`primary` / `standby` 等） |
 | `OLIVE_INSTANCE_ROLE` | `active` | 冗長構成でのロール（`active` / `standby`） |
@@ -150,6 +175,34 @@ ops\redundant-start.bat
 
 - `/versions`（旧ページ）は `/algorithm` へ恒久リダイレクト。
 - 開発中は CORS により `localhost:3000` / `localhost:3001` も許可されます（`backend/app/config.py` の `CORS_ORIGINS`）。
+
+## 永不停止化とエラー耐性
+
+単一コンポーネントの一時障害でシステム全体が止まらないよう、段階的に耐性を実装しています。
+
+### バックエンド（永不停止化）
+
+- **degraded起動＋自動復旧**: 起動時にDB・解析エンジン（grader/seed）・初期データが
+  使えない場合でもプロセスは起動し、利用可能になった時点で自動復旧します
+  （`/api/health` の `degraded` フラグ、`/api/health/ready` で監視）。
+- **解析キュー（runner）**: 永不停止ループ。起動時に途中で残った `pending` ジョブを
+  `stuck`（クラッシュループ）から自動リカバリし、ジョブ単位の例外も無限再試行しません。
+- **フレーム単位の失敗分離**: 動画の1フレーム解析失敗が他のフレームやジョブ全体を
+  巻き込まないよう、フレームごとにガードしてスコアを算出。
+- **アップロードのチャンク書込**: 巨大ファイルでもメモリを一括消費せずチャンク毎に書込
+  （OOM対策）。容量超過は `413 LIMIT_UPLOAD_TOO_LARGE` で当該ファイルのみ拒否。
+- **SQLite `busy_timeout`**: 同時書き込み時にロックエラーで落ちず待機します。
+- 詳細は [docs/operations.md](docs/operations.md) を参照してください。
+
+### フロントエンド（エラー耐性）
+
+- **ルート/ページ毎のエラーバウンダリ**: `app/global-error.tsx` と各 `error.tsx` により、
+  予期せぬ例外でも白画面にならず、リトライやログイン画面へ誘導します。
+- **非JSONレスポンス拒否**: プロキシ経由でHTML等が返った場合に JSON と誤認せず明示エラー
+  （白画面化防止、`frontend/lib/api.ts`）。
+- **watchdog**: `run_backend.bat` / `run_frontend.bat`（`start.bat` から同時起動）が
+  プロセスを監視し、クラッシュ時は指数的バックオフで再起動。クラッシュループ検知（10秒未満の
+  即死を連続15回で60秒待機）と前提チェック（venv存在確認等）付き。
 
 ## 検証コマンド
 
