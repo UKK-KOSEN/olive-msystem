@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from . import db_redundancy
 from .analyzer import OliveAnalyzer, parse_time
 from .captured import extract_captured_at, parse_captured_candidate
 from .translate_report import explain_detection_ja
@@ -86,16 +87,29 @@ def _open_store_with_retries(max_attempts: int = 4) -> Store:
     Import must never fail because the DB was momentarily locked or the
     schema init hit a transient error; the watchdog keeps the service alive,
     so a few bounded retries here prevent the boot-time crash loop (F1/F2).
+
+    If the failure looks like a broken file rather than a lock, the newest
+    rotated backup is restored once, then the open is retried on the same
+    attempt budget.  A corrupt database therefore becomes a bounded rollback
+    to the last snapshot instead of a degraded/broken boot.
     """
     last_exc: Optional[Exception] = None
+    restored_from: Optional[Path] = None
     for attempt in range(1, max_attempts + 1):
         try:
             return Store(DB_PATH, initialize_schema=IS_ACTIVE, read_only=not IS_ACTIVE)
         except Exception as exc:  # noqa: PERF203
             last_exc = exc
+            if restored_from is None and db_redundancy.looks_like_corruption(exc):
+                restored_from = db_redundancy.restore_latest_backup()
+                if restored_from is not None:
+                    continue  # do not sleep: retry against the restored file now
             if attempt < max_attempts:
                 time.sleep(2 * attempt)
-    raise RuntimeError(f"could not open the database after {max_attempts} attempts: {last_exc}")
+    raise RuntimeError(
+        f"could not open the database after {max_attempts} attempts"
+        + (f" (restored from {restored_from})" if restored_from else "")
+        + f": {last_exc}")
 
 
 try:
@@ -133,6 +147,11 @@ if IS_ACTIVE and _store_ready:
     except Exception:
         logging.getLogger("olive-msystem").exception(
             "runner could not be started; video analysis is disabled for this boot")
+
+# The active instance snapshots the DB to a rotated backup set; only one
+# writer should do this, so standby instances skip it entirely.
+if IS_ACTIVE:
+    db_redundancy.start_backup_scheduler()
 
 # Log to both console and a rotating file, so a crash/restart can be
 # investigated later even if the console window was closed.
@@ -192,6 +211,7 @@ def health():
         "write_enabled": IS_ACTIVE,
         "db_status": "ok" if db_ok else "error",
         "db_path": str(DB_PATH),
+        "db_backup": db_redundancy.backup_status(),
         "uptime_sec": int(time.time() - _BOOT_TIME),
         "timestamp": _dt.now().astimezone().isoformat(timespec="seconds"),
         **counts,

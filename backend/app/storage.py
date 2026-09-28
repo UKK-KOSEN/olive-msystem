@@ -137,7 +137,11 @@ class Store:
         try:
             # WAL journal: safer with the long-running service (concurrent
             # readers + single writer) and makes online backups consistent.
+            # synchronous=NORMAL is durable enough for WAL (a checkpoint or
+            # two may be lost on power failure, never committed data) and
+            # avoids fsync-ing on every commit.
             con.execute("PRAGMA journal_mode=WAL")
+            con.execute("PRAGMA synchronous=NORMAL")
             con.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS users (

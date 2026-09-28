@@ -419,12 +419,31 @@ export class NetworkError extends ApiError {
 const REQUEST_TIMEOUT_MS = 30_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 
+// Retry policy for idempotent requests (GET/HEAD/OPTIONS): up to
+// RETRY_ATTEMPTS total tries with exponential backoff + small jitter so a
+// transient 5xx / timeout / hub outage is absorbed without hammering the
+// backend (and without clients retrying in lockstep).
+const RETRY_ATTEMPTS = 3;
+const RETRY_BASE_MS = 250;
+const RETRY_MAX_MS = 2_000;
+const RETRY_JITTER_MS = 120;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isRetryableStatus(status: number): boolean {
-  return status === 429 || status >= 500;
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function isIdempotentMethod(method: string | undefined): boolean {
+  const m = (method || 'GET').toUpperCase();
+  return m === 'GET' || m === 'HEAD' || m === 'OPTIONS';
+}
+
+function backoffDelay(retryIndex: number): number {
+  const exponential = Math.min(RETRY_BASE_MS * 2 ** retryIndex, RETRY_MAX_MS);
+  return exponential + Math.floor(Math.random() * RETRY_JITTER_MS);
 }
 
 async function fetchWithTimeout(
@@ -456,22 +475,26 @@ async function fetchRetry(
   opts?: { timeoutMs?: number; retry?: boolean }
 ): Promise<Response> {
   const retry = opts?.retry ?? true;
-  const maxAttempts = retry ? 2 : 1;
+  // Mutations are never retried: re-sending a POST/PUT/DELETE that already
+  // reached the backend would duplicate the side effect. The guard is
+  // enforced here so a caller cannot accidentally enable retries on one.
+  const idempotent = isIdempotentMethod(init.method);
+  const maxAttempts = retry && idempotent ? RETRY_ATTEMPTS : 1;
   const timeoutMs = opts?.timeoutMs ?? (init.body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
   let lastErr: unknown = null;
 
   for (let i = 0; i < maxAttempts; i++) {
-    if (i > 0) await sleep(300 * i + 200);
+    if (i > 0) await sleep(backoffDelay(i - 1));
     try {
       const res = await fetchWithTimeout(url, init, timeoutMs);
-      if (retry && isRetryableStatus(res.status)) {
+      if (retry && idempotent && isRetryableStatus(res.status)) {
         lastErr = new ApiError(`サーバーエラーが発生しました（HTTP ${res.status}）`, res.status, true);
         continue;
       }
       return res;
     } catch (err) {
       lastErr = err;
-      if (!(err instanceof ApiError) || !err.retryable || !retry) break;
+      if (!(err instanceof ApiError) || !err.retryable || !retry || !idempotent) break;
     }
   }
   if (!lastErr) lastErr = new Error('リクエストに失敗しました');

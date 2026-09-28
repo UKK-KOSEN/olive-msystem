@@ -137,6 +137,7 @@ ops\redundant-start.bat
 
 - active: `127.0.0.1:8000` / standby: `127.0.0.1:8001` / frontend: `localhost:3001`
 - `ops\redundant-monitor.ps1` がヘルスを監視し、active 障害時に standby を昇格させます。
+- データベースは WAL モードで動作し、active インスタンスが `DB_BACKUP_INTERVAL_MIN`（既定30分）ごとに一貫性のあるスナップショットを `backend/data/backups/` へ世代ローテーション保存します。DB が破損した場合、起動時に最新バックアップから自動復元します（状態は `/api/health` の `db_backup` で確認できます）。
 
 ## 環境変数
 
@@ -154,6 +155,8 @@ ops\redundant-start.bat
 | `OLIVE_INSTANCE_ROLE` | `active` | 冗長構成でのロール（`active` / `standby`） |
 | `HEALTH_FAILURE_THRESHOLD` | `3` | フェイルオーバー前の連続失敗回数 |
 | `STANDBY_PORT` | `8001` | standby バックエンドのポート（冗長構成時） |
+| `DB_BACKUP_INTERVAL_MIN` | `30` | active インスタンスが SQLite をオンラインバックアップする間隔（分） |
+| `DB_BACKUP_KEEP` | `6` | 保持するバックアップ世代数（`backend/data/backups/` にローテーション保存） |
 
 ## フロント・バックエンドのポートとプロキシ
 

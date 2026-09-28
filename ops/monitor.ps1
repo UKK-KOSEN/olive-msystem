@@ -3,10 +3,11 @@
   olive-msystem service monitor: restarts backend / frontend on failure.
 .DESCRIPTION
   Polls the backend health endpoint and the frontend root page every N seconds.
-  If either is unreachable or returns a non-OK HTTP status, the offending
-  process is killed (allowing the watchdog batch to restart it) and a log line
-  is appended to ``logs/monitor.log``.  The script runs indefinitely until
-  the caller cancels it (Ctrl-C) or it is killed.
+  A single transient blip (slow request, restart in progress) is ignored; only
+  FailureThreshold consecutive failures kill the offending process (allowing
+  the watchdog batch to restart it) and a log line is appended to
+  ``logs/monitor.log``.  The script runs indefinitely until the caller
+  cancels it (Ctrl-C) or it is killed.
 .NOTES
   Run via ``ops\start-monitor.bat`` or as a Scheduled Task.
   Designed for PowerShell 5.1+.
@@ -16,7 +17,9 @@ param(
   [string]$BackendUrl = 'http://127.0.0.1:8000/api/health',
   [string]$FrontendUrl = 'http://127.0.0.1:3001/',
   [string]$BackendPort = '8000',
-  [string]$FrontendPort = '3001'
+  [string]$FrontendPort = '3001',
+  [int]$FailureThreshold = 3,
+  [int]$StartupGraceSec = 30
 )
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -61,44 +64,72 @@ function Start-Watchdog {
   Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$Bat`"" -WindowStyle Minimized
 }
 
+function Revive-Service {
+  param([string]$Name, [string]$Port, [string]$Bat)
+  $listening = Get-ListenerPid $Port
+  if ($listening) {
+    Write-Log "$Name unhealthy (listening=$listening). killing..."
+    Stop-Process -Id $listening -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+  } else {
+    Write-Log "$Name DOWN (port free). ensuring watchdog..."
+  }
+  if (-not (Get-ListenerPid $Port)) {
+    Start-Watchdog $Bat
+    Write-Log "started $Bat"
+    Start-Sleep -Seconds 5
+  }
+}
+
 $backendBat  = (Resolve-Path (Join-Path $Root 'run_backend.bat')).Path
 $frontendBat = (Resolve-Path (Join-Path $Root 'run_frontend.bat')).Path
 
-Write-Log "monitor started (interval=${IntervalSec}s)"
+$backendFailures  = 0
+$frontendFailures = 0
+$backendLastReset  = Get-Date
+$frontendLastReset = Get-Date
+
+Write-Log "monitor started (interval=${IntervalSec}s threshold=$FailureThreshold)"
 
 while ($true) {
   # --- backend ---
   if (-not (Test-Service $BackendUrl)) {
-    $pidListening = Get-ListenerPid $BackendPort
-    if ($pidListening) {
-      Write-Log "backend unhealthy (listening=$pidListening). killing..."
-      Stop-Process -Id $pidListening -Force -ErrorAction SilentlyContinue
-      Start-Sleep -Seconds 2
+    if ((Get-Date) -lt $backendLastReset.AddSeconds($StartupGraceSec)) {
+      # A freshly restarted process needs time to boot; don't punish it for
+      # a slow cold start, or the monitor and watchdog would fight in a loop.
+      Write-Log "backend warming up after (re)start; probe failures ignored"
+      $backendFailures = 0
     } else {
-      Write-Log "backend DOWN (port free). ensuring watchdog..."
+      $backendFailures++
+      if ($backendFailures -ge $FailureThreshold) {
+        Revive-Service 'backend' $BackendPort $backendBat
+        $backendFailures  = 0
+        $backendLastReset = Get-Date
+      } else {
+        Write-Log "backend unhealthy ($backendFailures/$FailureThreshold); verifying again"
+      }
     }
-    if (-not (Get-ListenerPid $BackendPort)) {
-      Start-Watchdog $backendBat
-      Write-Log "started run_backend.bat"
-      Start-Sleep -Seconds 5
-    }
+  } else {
+    $backendFailures = 0
   }
 
   # --- frontend ---
   if (-not (Test-Service $FrontendUrl)) {
-    $pidListening = Get-ListenerPid $FrontendPort
-    if ($pidListening) {
-      Write-Log "frontend unhealthy (listening=$pidListening). killing..."
-      Stop-Process -Id $pidListening -Force -ErrorAction SilentlyContinue
-      Start-Sleep -Seconds 2
+    if ((Get-Date) -lt $frontendLastReset.AddSeconds($StartupGraceSec)) {
+      Write-Log "frontend warming up after (re)start; probe failures ignored"
+      $frontendFailures = 0
     } else {
-      Write-Log "frontend DOWN (port free). ensuring watchdog..."
+      $frontendFailures++
+      if ($frontendFailures -ge $FailureThreshold) {
+        Revive-Service 'frontend' $FrontendPort $frontendBat
+        $frontendFailures  = 0
+        $frontendLastReset = Get-Date
+      } else {
+        Write-Log "frontend unhealthy ($frontendFailures/$FailureThreshold); verifying again"
+      }
     }
-    if (-not (Get-ListenerPid $FrontendPort)) {
-      Start-Watchdog $frontendBat
-      Write-Log "started run_frontend.bat"
-      Start-Sleep -Seconds 5
-    }
+  } else {
+    $frontendFailures = 0
   }
 
   Start-Sleep -Seconds $IntervalSec

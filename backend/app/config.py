@@ -150,6 +150,11 @@ IS_ACTIVE = INSTANCE_ROLE == "active"
 # How many simultaneous video processing workers.
 WORKERS = int(os.environ.get("WORKERS", "2"))
 
+# DB durability: how often (minutes) the active instance snapshots the SQLite
+# database and how many rotated backups to keep.  See app/db_redundancy.py.
+DB_BACKUP_INTERVAL_MIN = float(os.environ.get("DB_BACKUP_INTERVAL_MIN", "30"))
+DB_BACKUP_KEEP = int(os.environ.get("DB_BACKUP_KEEP", "6"))
+
 
 def ensure_dirs() -> None:
     for d in (DATA_DIR, UPLOAD_DIR, STORAGE_DIR, CONFIG_DIR):
