@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { api, FarmerRecord, Observation, TreeRecord } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { healthJa, healthColor, STATE_ORDER, stateOf, obsScore, TrendChart, StatePill } from '@/components/charts';
@@ -8,7 +9,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import ErrorNotice from '@/components/ErrorNotice';
 import { ObservationDetail } from '@/components/ObservationDetail';
-import { IconUser, IconDownload, IconTrash } from '@/components/icons';
+import { IconUser, IconDownload, IconTrash, IconChevronRight } from '@/components/icons';
 import { fmtDateTime } from '@/lib/format';
 
 type StateFilter = 'all' | (typeof STATE_ORDER)[number];
@@ -40,10 +41,19 @@ export default function TrackingPage() {
   const [trees, setTrees] = useState<TreeRecord[]>([]);
   const [treeId, setTreeId] = useState<string | null>(null);
 
-  // Support deep-links from the farm map: /tracking?tree=A-01
+  // Support deep-links from the farm map: /tracking?tree=A-01&farmer_id=3
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get('tree');
+    const p = new URLSearchParams(window.location.search);
+    const t = p.get('tree');
     if (t) setTreeId(t);
+    // Admins: keep the farmer scope chosen on the farm map so we never drift
+    // to a different farmer's rows. Farmers are always confined to themselves.
+    if (user?.role === 'admin') {
+      const f = p.get('farmer_id');
+      const n = f ? Number(f) : NaN;
+      if (!Number.isNaN(n)) setFarmerId(n);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // bulk selection
@@ -211,6 +221,22 @@ export default function TrackingPage() {
       />
 
       {error && <ErrorNotice message={error} />}
+
+      {treeId && (
+        <div className="mb-4 text-xs">
+          <Link
+            href={
+              isAdmin && farmerId != null
+                ? `/farm-map?tree=${encodeURIComponent(treeId)}&farmer_id=${farmerId}`
+                : `/farm-map?tree=${encodeURIComponent(treeId)}`
+            }
+            className="inline-flex items-center gap-1 rounded-lg border border-olive-200 bg-olive-50 px-2.5 py-1.5 font-medium text-olive-700 transition-colors hover:bg-olive-100"
+          >
+            <IconChevronRight size={14} className="rotate-180" />
+            農園マップへ戻る（{treeId}）
+          </Link>
+        </div>
+      )}
 
       {/* Filter bar */}
       <section className="card mb-6 overflow-visible">

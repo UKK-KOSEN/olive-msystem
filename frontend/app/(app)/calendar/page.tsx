@@ -425,7 +425,7 @@ export default function CalendarPage() {
                         {o.health_state ? healthJa(o.health_state.label) : '—'}
                       </span>
                       <span className="ml-auto text-xs tabular-nums text-neutral-500">
-                        {o.health_state?.score?.toFixed(2) ?? o.overall_health_score?.toFixed(2) ?? '—'}
+                        {o.health_state?.score != null ? Math.round(o.health_state.score * 100) : o.overall_health_score != null ? Math.round(o.overall_health_score * 100) : '—'}
                       </span>
                     </div>
                     <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-neutral-500">
@@ -436,7 +436,16 @@ export default function CalendarPage() {
                         {o.farm_name ? `${o.farm_name} · ` : ''}{timeOf(o.observed_at)}
                       </span>
                     </div>
-                    <Link href={o.label === 'image' ? '/images' : '/tracking'} className="mt-2 inline-flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-800">
+                    <Link
+                      href={
+                        o.label === 'image'
+                          ? '/images'
+                          : isAdmin && farmerId != null
+                            ? `/tracking?farmer_id=${farmerId}`
+                            : '/tracking'
+                      }
+                      className="mt-2 inline-flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-800"
+                    >
                       詳細を見る <IconChevronRight size={12} />
                     </Link>
                   </div>

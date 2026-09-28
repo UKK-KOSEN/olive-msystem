@@ -260,7 +260,10 @@ export default function Dashboard() {
   };
 
   // API returns newest-first; sort ascending (oldest -> newest) for chart/latest logic.
-  const sortedObs = useMemo(() => [...scopedObs].sort((a, b) => a.id - b.id), [scopedObs]);
+  const sortedObs = useMemo(
+    () => [...scopedObs].sort((a, b) => (a.observed_at || '').localeCompare(b.observed_at || '') || a.id - b.id),
+    [scopedObs]
+  );
 
   const latestState = useMemo<HealthState | null>(() => {
     if (!sortedObs.length) return null;
@@ -497,7 +500,7 @@ export default function Dashboard() {
             currentHealth
               ? `集計 ${(currentHealth.score * 100).toFixed(1)} / 直近 ${((currentHealth.latest_score ?? currentHealth.score) * 100).toFixed(1)}`
               : latestState
-                ? `スコア ${latestState.score.toFixed(2)}`
+                ? `スコア ${(latestState.score * 100).toFixed(1)}`
                 : 'まだデータなし'
           }
         />
@@ -651,7 +654,7 @@ export default function Dashboard() {
               <span>合計 {sortedObs.length} 観測</span>
               {avgScore != null && (
                 <span className="font-medium tabular-nums text-neutral-700">
-                  平均 {avgScore * 100 >= 10 ? (avgScore * 100).toFixed(1) : avgScore.toFixed(3)} 点
+                  平均 {(avgScore * 100).toFixed(1)} 点
                 </span>
               )}
             </div>
@@ -1332,7 +1335,7 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                         <span className="inline-flex items-center gap-1.5">
                           <span className="h-2.5 w-2.5 rounded-full" style={{ background: healthColor(st.label) }} />
                           <span className="text-neutral-700">{healthJa(st.label)}</span>
-                          <span className="text-xs tabular-nums text-neutral-400">{st.score.toFixed(2)}</span>
+                          <span className="text-xs tabular-nums text-neutral-400">{Math.round(st.score * 100)}</span>
                         </span>
                       ) : (
                         '—'

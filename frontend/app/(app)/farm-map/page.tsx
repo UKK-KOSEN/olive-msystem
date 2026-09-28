@@ -34,17 +34,35 @@ export default function FarmMapPage() {
   const [busy, setBusy] = useState(false);
   const [snackbar, setSnackbar] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pendingTreeRef = useRef<string | null>(null);
 
   const farmerParam = useMemo(
     () => (isAdmin ? (farmerId != null ? farmerId : undefined) : undefined),
     [isAdmin, farmerId]
   );
 
+  // Support deep-links back from the tracking page: /farm-map?tree=A-01&farmer_id=3
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const t = p.get('tree');
+    pendingTreeRef.current = t || null;
+    if (t) setSelected(t);
+  }, []);
+
+  // Escape clears the current tree selection.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selected) setSelected(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selected]);
+
   const load = useCallback(
     (fid: number | null) => {
       const sc = isAdmin ? (fid ?? undefined) : undefined;
       setLoading(true);
-      setSelected(null);
+      setSelected(pendingTreeRef.current);
       Promise.all([api.farmMap(sc), api.listFarmTrees(sc)])
         .then(([m, r]) => {
           setData(m);
@@ -65,7 +83,10 @@ export default function FarmMapPage() {
       .listFarmers()
       .then((list) => {
         setFarmers(list);
-        setFarmerId((prev) => prev ?? list[0]?.id ?? null);
+        const p = new URLSearchParams(window.location.search);
+        const wanted = p.get('farmer_id') ? Number(p.get('farmer_id')) : null;
+        const ok = wanted != null && !Number.isNaN(wanted) && list.some((f) => f.id === wanted);
+        setFarmerId(ok ? (wanted as number) : list[0]?.id ?? null);
       })
       .catch(() => {});
   }, [isAdmin, load]);
@@ -161,6 +182,29 @@ export default function FarmMapPage() {
     });
   };
 
+  const zoomStep = (dir: number) => {
+    const i = ZOOM_LEVELS.indexOf(zoom as (typeof ZOOM_LEVELS)[number]);
+    const base = i < 0 ? 1 : i;
+    const next = ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, base + dir))];
+    applyZoom(next);
+  };
+
+  const moveFarmer = (dir: number) => {
+    if (farmers.length === 0) return;
+    const idx = farmers.findIndex((f) => f.id === farmerId);
+    const base = idx < 0 ? 0 : idx;
+    const next = farmers[Math.max(0, Math.min(farmers.length - 1, base + dir))];
+    if (next) setFarmerId(next.id);
+  };
+
+  const openTree = (treeId_: string) => {
+    const href =
+      isAdmin && farmerId != null
+        ? `/tracking?tree=${encodeURIComponent(treeId_)}&farmer_id=${farmerId}`
+        : `/tracking?tree=${encodeURIComponent(treeId_)}`;
+    window.location.href = href;
+  };
+
   return (
     <div className="p-4 md:p-6 lg:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -193,20 +237,40 @@ export default function FarmMapPage() {
       {isAdmin && (
         <section className="mt-6 mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
           <span className="text-sm font-medium text-neutral-700">表示する農家</span>
-          <select
-            value={farmerId ?? ''}
-            onChange={(e) => setFarmerId(e.target.value ? Number(e.target.value) : null)}
-            className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-olive-500 focus:outline-none"
-          >
-            <option value="" disabled>
-              表示する農家を選択
-            </option>
-            {farmers.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.farm_name || f.display_name || f.username}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => moveFarmer(-1)}
+              disabled={farmers.length === 0}
+              aria-label="前の農家"
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-neutral-50 disabled:opacity-40"
+            >
+              ‹
+            </button>
+            <select
+              value={farmerId ?? ''}
+              onChange={(e) => setFarmerId(e.target.value ? Number(e.target.value) : null)}
+              className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-olive-500 focus:outline-none"
+            >
+              <option value="" disabled>
+                表示する農家を選択
               </option>
-            ))}
-          </select>
+              {farmers.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.farm_name || f.display_name || f.username}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => moveFarmer(1)}
+              disabled={farmers.length === 0}
+              aria-label="次の農家"
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-neutral-50 disabled:opacity-40"
+            >
+              ›
+            </button>
+          </div>
           <p className="text-xs text-neutral-500">
             各農家ごとに樹木台帳と農園の区画が独立しています。
           </p>
@@ -320,6 +384,15 @@ export default function FarmMapPage() {
               </div>
               <div className="flex items-center gap-1">
                 <span className="mr-1 text-xs text-neutral-400">表示</span>
+                <button
+                  type="button"
+                  onClick={() => zoomStep(-1)}
+                  disabled={zoom <= ZOOM_LEVELS[0]}
+                  aria-label="縮小"
+                  className="rounded-md px-2 py-1 text-xs font-bold text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40"
+                >
+                  −
+                </button>
                 {ZOOM_LEVELS.map((z) => (
                   <button
                     key={z}
@@ -332,6 +405,15 @@ export default function FarmMapPage() {
                     {Math.round(z * 100)}%
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={() => zoomStep(1)}
+                  disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}
+                  aria-label="拡大"
+                  className="rounded-md px-2 py-1 text-xs font-bold text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40"
+                >
+                  ＋
+                </button>
               </div>
             </div>
 
@@ -462,6 +544,7 @@ export default function FarmMapPage() {
                           hidden={!!query && !matches}
                           selected={selected === t.tree_id}
                           onSelect={(id) => setSelected(selected === id ? null : id)}
+                          onOpen={(id) => openTree(id)}
                         />
                       );
                     })}
@@ -473,6 +556,7 @@ export default function FarmMapPage() {
           <TreeDetail
             tree={selectedTree}
             reg={selectedReg}
+            adminFarmerId={isAdmin ? farmerId : null}
             onClear={() => setSelected(null)}
             onEdit={selectedReg ? () => setModal({ mode: 'edit', tree: selectedReg }) : () => setModal({ mode: 'add', prefill: selected ?? undefined })}
           />
@@ -631,12 +715,14 @@ function TreeNode({
   hidden,
   selected,
   onSelect,
+  onOpen,
 }: {
   t: FarmMapTree;
   dimmed: boolean;
   hidden?: boolean;
   selected: boolean;
   onSelect: (id: string) => void;
+  onOpen?: (id: string) => void;
 }) {
   const color = t.state ? healthColor(t.state.label) : '#cccccc';
   const label = t.name || t.tree_id;
@@ -651,6 +737,7 @@ function TreeNode({
   if (t.observation_count > 0) tooltipParts.push(`観測 ${t.observation_count}回`);
   if (t.last_seen) tooltipParts.push(`最終 ${t.last_seen.slice(0, 10)}`);
   if (t.state?.message) tooltipParts.push(t.state.message);
+  tooltipParts.push('クリックで詳細 ／ ダブルクリックで観測記録');
 
   return hidden ? null : (
     <g role="button" tabIndex={0} aria-label={`樹木 ${t.tree_id}`} onKeyDown={handleKeyDown}>
@@ -663,7 +750,13 @@ function TreeNode({
         strokeWidth={1.5}
         strokeDasharray="4 4"
       />
-      <g onClick={() => onSelect(t.tree_id)} className="cursor-pointer" opacity={dimmed ? 0.25 : 1} style={{ transition: 'opacity 0.15s' }}>
+      <g
+        onClick={() => onSelect(t.tree_id)}
+        onDoubleClick={() => onOpen?.(t.tree_id)}
+        className="cursor-pointer"
+        opacity={dimmed ? 0.25 : 1}
+        style={{ transition: 'opacity 0.15s' }}
+      >
         <title>{tooltipParts.join('\n')}</title>
         {/* crown */}
         <circle
@@ -733,23 +826,29 @@ function TreeNode({
 function TreeDetail({
   tree,
   reg,
+  adminFarmerId,
   onClear,
   onEdit,
 }: {
   tree: FarmMapTree | null;
   reg: FarmTreeRecord | null;
+  adminFarmerId?: number | null;
   onClear: () => void;
   onEdit: () => void;
 }) {
   if (!tree) {
     return (
       <div className="mt-4 rounded-xl border border-dashed border-neutral-300 bg-white/60 p-5 text-center text-sm text-neutral-400" role="status" aria-live="polite">
-        マップ上の樹木をクリックまたはEnterキーで選択すると、その木の詳細がここに表示されます。
+        マップ上の樹木をクリックまたはEnterキーで選択すると、その木の詳細がここに表示されます。ダブルクリックで観測記録を開きます。
       </div>
     );
   }
   const state = tree.state;
   const name = tree.name || reg?.name;
+  const trackingHref =
+    adminFarmerId != null
+      ? `/tracking?tree=${encodeURIComponent(tree.tree_id)}&farmer_id=${adminFarmerId}`
+      : `/tracking?tree=${encodeURIComponent(tree.tree_id)}`;
   return (
     <div className="mt-4 rounded-xl border border-neutral-200 bg-white p-4 sm:p-5 shadow-sm" role="region" aria-label={`樹木 ${tree.tree_id} の詳細`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -806,7 +905,7 @@ function TreeDetail({
       ) : undefined}
       <div className="mt-4 flex flex-wrap gap-2">
         <Link
-          href={`/tracking?tree=${encodeURIComponent(tree.tree_id)}`}
+          href={trackingHref}
           className="rounded-lg border border-olive-600 px-3 py-1.5 text-sm font-medium text-olive-700 transition-colors hover:bg-olive-50"
         >
           観測記録を見る
