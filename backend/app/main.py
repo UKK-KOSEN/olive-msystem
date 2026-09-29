@@ -1397,7 +1397,7 @@ def farm_map(farmer_id: Optional[int] = Query(None),
     registered = store.list_trees_registry(user_id=uid)
     reg_by_id = {t["tree_id"]: t for t in registered}
 
-    COLS = 8
+    COLS = 3
     CELL_W, CELL_H = 118, 130
     PAD_X, PAD_Y = 70, 70
 
@@ -1453,7 +1453,7 @@ def farm_map(farmer_id: Optional[int] = Query(None),
             col = 1
             row += 1
 
-    max_row = max((t["row"] for t in tree_nodes), default=1)
+    max_row = max(2, max((t["row"] for t in tree_nodes), default=1))
     return {
         "farmer": farmer,
         "map": {

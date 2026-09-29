@@ -9,7 +9,7 @@ import { Snackbar } from '@/components/Snackbar';
 import { fmtDateTimeShort } from '@/lib/format';
 import ErrorNotice from '@/components/ErrorNotice';
 
-const MAP_COLS = 8;
+const MAP_COLS = 3;
 const CELL_W = 118;
 const PAD_X = 70;
 const PAD_Y = 80;
@@ -143,8 +143,8 @@ export default function FarmMapPage() {
     [registry, selected]
   );
 
-  const mapW = data?.map.width ?? 1084;
-  const maxRow = Math.max(...(data?.trees.map((t) => t.row) ?? [1]));
+  const mapW = data?.map.width ?? PAD_X * 2 + MAP_COLS * CELL_W;
+  const maxRow = Math.max(2, ...(data?.trees.map((t) => t.row) ?? [2]));
   const mapH = data?.map.height ?? PAD_Y + maxRow * 130 + 30;
 
   const handleImport = async () => {
