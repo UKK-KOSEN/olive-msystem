@@ -2,14 +2,20 @@
 
 ベースURL: `http://127.0.0.1:8000`
 認証: 特別な指定が無い限り `Authorization: Bearer <token>` が必要。
-トークンは `POST /api/auth/login` で取得（レスポンスの `token` フィールド）。
+トークンは `POST /api/auth/login` / `POST /api/auth/register` で取得（レスポンスの `token` フィールド）。
+
+> **トークンの正体**: JWT ではなく、`secrets.token_urlsafe(32)` で生成した**不透明な文字列**
+> を `sessions` テーブルに保存する方式です（有効期限30日・1ユーザー1セッション）。
+> ログインするたびに既存セッションは削除され新しく発行されます。
+> パスワードは保存されず、PBKDF2-HMAC-SHA256 のソルト付きハッシュのみ保管します。
 
 ## 認証 (`/api/auth`)
 
 | メソッド・パス | 説明 |
 |----------------|------|
-| `POST /api/auth/login` | ログイン `{username, password}` → JWT |
-| `POST /api/auth/register` | 農家登録 |
+| `POST /api/auth/login` | ログイン `{username, password}` → `{token, user}` |
+| `POST /api/auth/register` | 農家登録 → `{token, user}`（自動ログイン） |
+| `POST /api/auth/logout` | セッション削除（`Authorization` ヘッダーからトークンを廃棄、認証不要） |
 | `GET /api/auth/me` | 自分の情報 |
 | `PUT /api/auth/profile` | プロフィール更新 |
 | `GET /PUT /api/auth/preferences` | 表示設定 |
@@ -37,10 +43,11 @@
 |----------------|------|
 | `GET /api/observations` | 観測一覧（農家は自分のみ。`tree_id` 絞り込み可） |
 | `DELETE /api/observations` | 観測一括削除 |
+| `DELETE /api/observations/{observation_id}` | 観測1件削除 |
 | `GET /api/observations/export` | CSV/JSONエクスポート |
 | `GET /api/olive/status` | 体調ステータス・推移 |
 | `GET /api/calendar/observations` | カレンダー用データ |
-| `GET /api/trees` | 追跡用の樹木ID一覧 |
+| `GET /api/trees` | 追跡用の樹木ID一覧（観測に登場した未登録IDも含む） |
 
 ## 農園マップ / 樹木台帳
 
@@ -58,9 +65,10 @@
 | メソッド・パス | 説明 |
 |----------------|------|
 | `GET /api/soil-moisture/status` | センサー最新値・鮮度・API監視情報（`sensor_online`, `data_age_hours` を含む） |
-| `GET /api/sensor-alerts` | センサー異常監視の状態・設定・送信履歴 |
+| `GET /api/sensor-alerts` | センサー異常監視の状態・設定・送信履歴（チャネル秘密はマスク表示） |
 | `POST /api/admin/soil-config/test` | 土壌水分API接続テスト（管理者） |
 | `POST /api/admin/soil-config/test-notification` | 通知チャネルのテスト送信（管理者） |
+| `POST /api/admin/soil-config/template-preview` | 通知テンプレートのサンプルプレビュー（管理者） |
 | `PUT /api/admin/soil-config` | 設定保存（`alerts` セクション含む。部分保存時は既存値を保持） |
 
 ## 通知
@@ -80,28 +88,70 @@
 | `GET /api/admin/stats` | ダッシュボード統計（設定・DB件数） |
 | `GET/PUT /api/admin/farmers` | 農家一覧・更新 |
 | `PUT /api/admin/farmers/{id}/password` | 農家パスワード変更 |
+| `DELETE /api/admin/farmers/{id}` | 農家削除（動画・画像ごと削除） |
 | `GET/PUT /api/admin/settings` | 判定しきい値・サイト設定 |
-| `DELETE /api/admin/videos/images/observations/{id}` | 資産・観測の削除 |
+| `POST /api/admin/observations/clear` | 観測データの一括クリア |
+| `DELETE /api/admin/videos/{id}` / `DELETE /api/admin/images/{id}` / `DELETE /api/admin/observations/{id}` | 管理者による資産・観測の削除 |
 
 ## その他・静的
 
 | メソッド・パス | 説明 |
 |----------------|------|
-| `GET /api/health` | 死活監視（認証なし）。`status`、`db_status`、`role`、`ready`、`can_promote`、`uptime_sec` など |
+| `GET /api/health` | 死活監視（認証なし）。`status`、`db_status`、`role`、`ready`、`can_promote`、`db_backup`、`uptime_sec` など（下記参照） |
 | `GET /api/health/ready` | レディネスチェック（active かつ DB 利用可能時に 200、そうでないとき 503） |
-| `GET /api/olive/status` など | 体調情報 |
-| `GET /storage/{...}` | 解析済みフレーム・注釈画像の静的配信 |
+| `GET /api/versions` | ソフトウェアスタックのバージョン・構成・動作環境（認証なし、`/algorithm` ページで表示） |
+| `GET /api/settings` | サイト表示設定（サイト名等）の公開読み取り（認証なし）。`{"site": {...}}` |
+| `GET /storage/{...}` | 解析済みフレーム・注釈画像の静的配信（パストラバーサルを拒否） |
 | `GET /media/{file}` | 動画の Range 対応ストリーミング配信 |
 
 ## health / ready の詳細
 
 | エンドポイント | 用途 | 認証 | レスポンス |
 |---------------|------|------|------------|
-| `GET /api/health` | liveness（プロセス生存確認） | 不要 | プロセス生存・DB状態・ロール・稼働時間など。DB異常時も通常は200 |
+| `GET /api/health` | liveness（プロセス生存確認） | 不要 | プロセス生存・DB状態・ロール・稼働時間・DBバックアップ状態など。DB異常時でも通常は200（`status: "degraded"`） |
 | `GET /api/health/ready` | readiness（サービス提供可能確認） | 不要 | 200: active 且つ DB 利用可 / 503: standby 或いは DB 異常 |
 
-- `/api/health` は DB の読み取り結果を `db_status` に記録し、`can_promote`（DB利用可否）も返します。
-- `/api/health/ready` は active であり DB が利用可能な場合のみ 200 を返します。
+`GET /api/health` のレスポンス例:
+
+```json
+{
+  "status": "ok",
+  "service": "olive-msystem-backend",
+  "version": "1.0.0",
+  "instance_id": "standalone",
+  "role": "active",
+  "active": true,
+  "ready": true,
+  "can_promote": true,
+  "write_enabled": true,
+  "db_status": "ok",
+  "db_path": "backend/data/olive_msystem.db",
+  "db_backup": {
+    "enabled": true,
+    "last_backup_at": "2026-09-28T13:43:36+00:00",
+    "backup_dir": "backend/data/backups",
+    "files": 2
+  },
+  "uptime_sec": 1234,
+  "timestamp": "2026-09-28T13:44:00+09:00",
+  "observations": 12,
+  "videos": 3,
+  "images": 1
+}
+```
+
+| フィールド | 説明 |
+|-----------|------|
+| `status` | `ok`（DB利用可）または `degraded`（DB異常でもプロセスは生存） |
+| `role` / `active` | インスタンスロール（`active` / `standby`）とその判定 |
+| `ready` | `active` かつDB利用可なら `true`（`/api/health/ready` の判定根拠） |
+| `can_promote` | standby が DB 読み取り可能か（フェイルオーバー可否） |
+| `write_enabled` | 書き込みAPIを許可しているか（standby は `false`） |
+| `db_status` | `ok` / `error` |
+| `db_backup` | DB冗長化の状態（`enabled` / `last_backup_at` / `backup_dir` / `files`）。`last_backup_at` は起動直後は `null` |
+| `observations` / `videos` / `images` | 件数（storage の `count()`） |
+
+- `GET /api/health/ready` は active であり DB が利用可能な場合のみ 200 を返します。
 
 ## UIプロキシに関する注意
 
@@ -120,6 +170,10 @@
 ## レスポンス形式
 
 - 成功: 通常の JSON。
-- エラー: `{detail: "..."}`（FastAPI標準）。
+- エラー: `{detail: "...", code: "...", extra?: {...}}`。
+  - `detail` は人間向けメッセージ（従来の FastAPI 形式のまま）。
+  - `code` は機械判別用の安定コード（例: `AUTH_REQUIRED` / `VALIDATION_*` / `NOT_FOUND_*` /
+    `CONFLICT_*` / `LIMIT_*` / `SERVER_*` / `UNAVAILABLE_*`）。`backend/app/errors.py` の `ERROR_CODES` 参照。
+  - `extra` はエラーに付随する追加情報がある場合のみ付与（例: 上限値など）。
 - 一覧系は `[{...}]` または `{"data": [...]}` の形式（APIにより異なる）。
   農家ユーザーには自分のデータのみ、管理者には全体が返ります。

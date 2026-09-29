@@ -46,6 +46,9 @@ except OSError:
     pass
 _BOOT_TIME = time.time()
 
+# Farm-map grid: rows are assigned in whole-row units of this many columns.
+GRID_COLS = 3
+
 app = FastAPI(title="olive-msystem", version="1.0.0")
 
 app.add_middleware(
@@ -1315,7 +1318,7 @@ def import_tree_registry(farmer_id: Optional[int] = Query(None),
     todo = [t for t in observed if t["tree_id"] not in have]
 
     occupied = {(t["row_num"], t["col_num"]) for t in registered}
-    COLS = 8
+    COLS = GRID_COLS
     created = []
     max_row = max((t["row_num"] for t in registered), default=0)
     row, col = max_row + 1, 1
@@ -1397,7 +1400,7 @@ def farm_map(farmer_id: Optional[int] = Query(None),
     registered = store.list_trees_registry(user_id=uid)
     reg_by_id = {t["tree_id"]: t for t in registered}
 
-    COLS = 3
+    COLS = GRID_COLS
     CELL_W, CELL_H = 118, 130
     PAD_X, PAD_Y = 70, 70
 

@@ -1,6 +1,6 @@
 # システム構成 (architecture)
 
-olive-msystem は **FastAPI (Python)** バックエンド + **Next.js 14 (App Router)** フロントエンドの2層構成です。
+olive-msystem は **FastAPI (Python)** バックエンド + **Next.js 15 (App Router) / React 19** フロントエンドの2層構成です。
 
 ## 全体像
 
@@ -18,32 +18,37 @@ FastAPI (backend, ポート 8000)
    ├── センサー監視スレッド (sensor_alerts)
    │     ・土壌水分センサーの異常検知（停止/水分値異常/APIエラー）
    │     ・検知 → リマインド → 復旧通知をDBとWebhookへ送信
-   └── SQLite (backend/data/olive_msystem.db)
+   ├── DBバックアップスレッド (db_redundancy)
+   │     ・active インスタンスが SQLite をオンラインバックアップ
+   │     ・破損時の最新バックアップからの自動復元
+   └── SQLite (backend/data/olive_msystem.db) + backend/data/backups/
 ```
 
 ## バックエンド (`backend/app`)
 
 | モジュール | 役割 |
 |------------|------|
-| `main.py` | FastAPI アプリ本体・全APIエンドポイント・バックグラウンドスレッド起動 |
+| `main.py` | FastAPI アプリ本体・全APIエンドポイント・エラーハンドラ・バックグラウンドスレッド（Runner / センサー監視 / DBバックアップ）起動 |
 | `analyzer.py` | olive-p の解析器をラップ（`Analyzer` / `VideoProcessor` / upscale） |
 | `translate_report.py` | 解析レポートの日本語訳（テンプレート翻訳規則） |
 | `health.py` | `overall_health_score` → happy/good/caution/danger の4状態マッピング |
-| `runner.py` | 解析ジョブのバックグラウンドキュー（1ワーカー） |
-| `storage.py` | SQLite 永続化（テーブル管理・CRUD・認証ハッシュ） |
-| `auth.py` | JWT認証・ロール判定（farmer / admin） |
+| `runner.py` | 解析ジョブのバックグラウンドキュー（`WORKERS` 個のワーカー） |
+| `storage.py` | SQLite 永続化（テーブル管理・CRUD・パスワードハッシュ・セッション管理） |
+| `auth.py` | トークン認証（SQLiteセッション）・ロール判定（farmer / admin） |
+| `errors.py` | 機械判別可能なAPIエラーコード（`ERROR_CODES` / `app_error` / `error_body`） |
 | `soil_moisture.py` | 土壌水分センサーAPIクライアント・最新値の取得と土壌健康評価 |
 | `sensor_alerts.py` | センサー異常の監視・通知（状態機械・エスカレーション・チャネル送信） |
 | `captured.py` | 撮影時刻（観測日時）の抽出・判定 |
 | `config.py` | 各種パス・設定・環境変数の解決 |
+| `db_redundancy.py` | SQLiteオンラインバックアップ・世代ローテーション・破損時自動復元 |
 | `models.py` | Pydantic リクエストモデル |
 
 ## SQLite テーブル
 
 | テーブル | 説明 |
 |----------|------|
-| `users` | ユーザー（role: farmer/admin、farm_name 等） |
-| `sessions` | JWTセッション |
+| `users` | ユーザー（role: farmer/admin、farm_name 等）。パスワードは PBKDF2-HMAC-SHA256 のソルト付きハッシュで保存 |
+| `sessions` | セッショントークン（不透明なBearerトークン・有効30日・1ユーザー1セッション） |
 | `videos` / `images` | アップロード資産（メタ情報、storage_path は相対パス） |
 | `observations` | 解析結果（時刻・ラベル・スコア・結果JSON・注釈画像パス） |
 | `trees` | 農園マップ用の樹木台帳（user_id + tree_id で一意、畝/列/品種） |
@@ -52,11 +57,20 @@ FastAPI (backend, ポート 8000)
 | `sensor_alert_events` | センサー異常通知の送信履歴 |
 
 DB は WAL モードで運用しており、稼働中のバックアップ（`ops/backup.py`）と
-読み書きの競合に安全です。
+読み書きの競合に安全です。さらに active インスタンスは `backend/app/db_redundancy.py` の
+スケジューラにより `DB_BACKUP_INTERVAL_MIN`（既定30分）ごとに一貫性のあるスナップショットを
+`backend/data/backups/` へ世代ローテーション保存し、起動時にDB破損を検出した場合は
+最新バックアップへ自動復元します（詳細は後述の「DB冗長化」を参照）。
 
 ## 認証と権限
 
-- JWT（`Authorization: Bearer <token>`）。トークンは `POST /api/auth/login` で取得。
+- **不透明なBearerトークン**（`Authorization: Bearer <token>`）。JWTではありません。
+  トークンは `POST /api/auth/login`（または `POST /api/auth/register`）のレスポンスの
+  `token` フィールドで取得します。トークン本体は `secrets.token_urlsafe(32)` で生成される
+  ランダム文字列で、`sessions` テーブルに保存されます。
+- トークンの有効期限は30日。ログインするたびにそのユーザーの**既存セッションを削除**して
+  新しく発行するため、1ユーザーにつき常に1つの有効なセッションです。
+  明示的に `POST /api/auth/logout` でも削除できます（ヘッダーに `Authorization` 不要）。
 - ロール:
   - **farmer**: 原則自分のデータのみ取得・編集。通知の `target_user_id` や樹木APIの `farmer_id` など、管理者向けスコープ指定は権限制約に従います。
   - **admin**: `/api/admin/*` と `/admin` ページへアクセス可能。
@@ -92,6 +106,27 @@ Webhook（LINE Notify / Slack 等）の両方へ一貫して送信します。
 
 状態はDBに永続化されるため、サーバー再起動しても再通知・重複通知になりません。
 
+## DB冗長化（オンラインバックアップと破損復元）
+
+`backend/app/db_redundancy.py` が、稼働中DBの一貫性のあるスナップショットを管理します。
+
+- **スケジューラ**: active インスタンスだけがデーモンスレッド（`db-backup-scheduler`）を起動します。
+  起動60秒後の初回実行後、`DB_BACKUP_INTERVAL_MIN`（既定30分）ごとに SQLite の
+  オンラインバックアップAPI（`src.backup()`）で `backend/data/backups/` へ保存します。
+  ファイル名は `olive_msystem.<UTC時刻>.db` 形式（例: `olive_msystem.20260928T134336Z.db`）。
+- **世代ローテーション**: `DB_BACKUP_KEEP`（既定6）を超えた古い世代は自動削除されます。
+  `list_backups()` は新しい順に返します。
+- **破損時自動復元**: 起動時の `_open_store_with_retries()` で、DBファイルが破損
+  （`corrupt` / `malformed` / `not a database` / `disk i/o error` など）と判定された場合、
+  最新バックアップを一時ファイル経由で原子的に書き戻します（WAL/SHMは破棄）。
+  バックアップがない・256MB超などの安全ガードを満たさない場合は復元せず degraded 起動します。
+- **状態確認**: `/api/health` の `db_backup` フィールドに
+  `{enabled, last_backup_at, backup_dir, files}` が含まれます。
+
+注意: 本機能は**プロセス・DBファイル単位の障害**向けです。ディスク破損は `backend/data/`
+自体が生き残っていないと復元できません。このため手動の夜間バックアップ（`ops/backup.py`）と
+併用してください（[docs/operations.md](operations.md)）。
+
 ## フロントエンド (`frontend`)
 
 ```
@@ -120,11 +155,13 @@ app/
 | 項目 | 場所 |
 |------|------|
 | SQLite DB | `backend/data/olive_msystem.db`（WAL） |
+| DBオンラインバックアップ | `backend/data/backups/`（`olive_msystem.<UTC時刻>.db`、`DB_BACKUP_KEEP` 世代） |
 | アップロード済み動画・画像 | `backend/uploads/` |
 | 解析済みフレーム・注釈画像 | `backend/storage/<id>/` |
 | アプリ設定 | `backend/config/settings.json` |
 | 土壌水分センサー設定 | `backend/config/soil_moisture.yaml`（APIキー含む＝コミット禁止） |
-| ログ | `logs/`（backend.log / backend-uvicorn.log / frontend.log / monitor.log / redundant-monitor.log / backup.log） |
+| アプリログ | `backend/logs/backend.log`（5MB×3ローテーション） |
+| watchdog・監視ログ | `logs/`（backend-uvicorn / frontend / monitor / redundant-monitor / backup）.log |
 
 ## UI/UX構成
 
@@ -196,11 +233,12 @@ app/
 | `/faq` | README（FAQ） | `frontend/app/(app)/faq/page.tsx` | よくある質問 |
 | `/admin` | [docs/api.md](api.md), [docs/operations.md](operations.md) | `frontend/app/(admin)/admin/page.tsx`, `frontend/components/AdminSidebar.tsx` | 管理ダッシュボード（単一ルート内のセクション構成） |
 | `/forbidden` | （エラーページ） | `frontend/app/forbidden/page.tsx` | 403 アクセス禁止 |
-| `/api/health` | [docs/api.md](api.md) | `backend/app/health.py` | 死活監視 |
-| `/api/health/ready` | [docs/api.md](api.md) | `backend/app/health.py` | レディネスチェック |
+| `/api/health` | [docs/api.md](api.md) | `backend/app/main.py` | 死活監視（liveness） |
+| `/api/health/ready` | [docs/api.md](api.md) | `backend/app/main.py` | レディネスチェック |
 | 全API | [docs/api.md](api.md) | `backend/app/main.py`, `frontend/lib/api.ts` | APIリファレンス |
 | 冗長構成 | [docs/operations.md](operations.md) | `ops/redundant-monitor.ps1`, `ops/monitor.ps1` | active/standby 監視・フェイルオーバー |
-| バックアップ | [docs/operations.md](operations.md) | `ops/backup.py` | SQLiteオンラインバックアップ |
+| 手動バックアップ | [docs/operations.md](operations.md) | `ops/backup.py` | SQLiteオンラインバックアップ（config/uploads/storage 含む） |
+| DB冗長化（自動） | [docs/operations.md](operations.md) | `backend/app/db_redundancy.py` | 定期スナップショット・世代ローテーション・破損復元 |
 
 ## 冗長化・運用
 
@@ -209,8 +247,11 @@ app/
 - standby は書き込みAPIを拒否し、Runner・センサー監視スレッド・管理データ初期化を停止し、SQLiteをread-onlyで開く。
 - `/api/health` は `role`、`ready`、`can_promote` を返し、`/api/health/ready` は active 且つDB利用可能の場合だけ200を返す。
 - SQLite（WAL）と `backend/data/`、`backend/uploads/`、`backend/storage/` は同一ホスト上で2プロセスが共有する。このため冗長化の対象はバックエンドプロセス障害であり、ホスト障害・ディスク障害には対応しない。
-- `ops/monitor.ps1` + `ops/start-monitor.bat`: 単一バックエンド構成向けの `/api/health` 監視。
+- `ops/monitor.ps1` + `ops/start-monitor.bat`: 単一バックエンド構成向けの `/api/health` 監視
+  （`-FailureThreshold`（連続失敗閾値）と `-StartupGraceSec`（起動猶予）を指定可能）。
 - `ops/backup.py` + `ops/backup.bat`: SQLite のオンライン一貫バックアップと config/uploads/storage のコピー（`--verify` で整合性確認）。
+- `backend/app/db_redundancy.py`: active インスタンスが定期実行する DB オンラインバックアップ
+  （`DB_BACKUP_INTERVAL_MIN` / `DB_BACKUP_KEEP`）と、起動時の破損検出に伴う自動復元。
 
 真正のホスト冗長化が必要な場合は、SQLiteを外部DBへ、ローカルファイルをSMB/S3等の共有ストレージへ移行する。
 

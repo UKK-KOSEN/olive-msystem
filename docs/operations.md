@@ -77,23 +77,57 @@ ops\redundant-stop.bat
 
 SQLite（WAL）と `backend/data/`、`backend/uploads/`、`backend/storage/` は同一ホスト上で共有されます。この構成はバックエンドプロセス障害を対象としており、ホスト障害・ディスク障害・ネットワーク分割には対応しません。真正のホスト冗長化には、PostgreSQL等の外部DBとSMB/S3等の共有ストレージへ移行してください。
 
-## ヘルスチェック
-
-```powershell
-curl http://127.0.0.1:8000/api/health
-curl http://127.0.0.1:8000/api/health/ready
-curl http://127.0.0.1:8001/api/health
-```
-
-`/api/health` はliveness用で、DB読み取り結果を `db_status` と `can_promote` に記録します。`/api/health/ready` は active かつDB利用可能の場合だけ200を返し、standbyまたはDB異常時は503を返します。
-
 ## 単一構成の死活監視
 
 `ops\start-monitor.bat` は `ops\monitor.ps1` を起動し、`/api/health` を30秒間隔で監視します。冗長構成では `ops\redundant-start.bat` を使用してください。
 
+`monitor.ps1` は以下のパラメータを指定できます（既定値で十分な場合はコマンドライン引数なしで起動）。
+
+| パラメータ | 既定値 | 説明 |
+|-----------|--------|------|
+| `-FailureThreshold` | `3` | 再起動を実行するまでの連続失敗回数。1回だけの通信途絶（瞬間的なblip）では再起動しません |
+| `-StartupGraceSec` | `30` | バックエンド起動直後の猶予秒数。この間は立ち上がり中として失敗カウントしません |
+
+```powershell
+# 例: 失敗5回で再起動・起動猶予60秒
+ops\monitor.ps1 -FailureThreshold 5 -StartupGraceSec 60
+```
+
+## アプリ内DB冗長化（自動バックアップ・自動復元）
+
+バックエンド自体が **実行中にDBのスナップショットを取り続け、破損時に自動復元する** 仕組みです
+（`backend/app/db_redundancy.py`）。プロセスが落ちてもデータが失われないようにする運用レベルの
+バックアップ（`ops/backup.py`）と併用してください。
+
+- **スケジューラ**: active インスタンスだけが起動するデーモンスレッドが、起動60秒後に初回、
+  その後 `DB_BACKUP_INTERVAL_MIN`（既定30分）ごとに SQLite のオンラインバックアップAPIで
+  スナップショットを `backend/data/backups/` へ保存します。
+- **世代管理**: `DB_BACKUP_KEEP`（既定6）世代を新しい順に保持し、超えた古いものは自動削除。
+  ファイル名は `olive_msystem.<UTC時刻>.db`（例: `olive_msystem.20260928T134336Z.db`）。
+- **破損時自動復元**: 起動時、DBファイルが破損（`corrupt` / `malformed` / `not a database` /
+  `disk i/o error`）と判定されると、最新バックアップを自動的に書き戻して起動します
+  （書き戻しは一時ファイル＋renameで原子的。バックアップがない・256MB超の場合は復元せず degraded 起動）。
+- **確認方法**: `GET /api/health` の `db_backup` フィールド
+  （`enabled` / `last_backup_at` / `backup_dir` / `files`）。
+
+手動で復元操作をしたい場合の補足:
+
+```powershell
+# バックアップ一覧（新しい順）
+Get-ChildItem backend\data\backups\olive_msystem.*.db | Sort-Object Name -Descending
+
+# 復旧例: サービスを止めたうえで、選んだバックアップをDBへコピー（WALも消す）
+#   Stop プロセス停止後:
+#   Copy-Item backend\data\backups\olive_msystem.<時刻>.db backend\data\olive_msystem.db
+#   Remove-Item backend\data\olive_msystem.db-wal, backend\data\olive_msystem.db-shm -ErrorAction SilentlyContinue
+```
+
+> 注意: `backend/data/backups/` は同じディスク上にあります。ディスクそのものが壊れた場合は
+> 復元できません。ホスト外へ退避するには必ず `ops/backup.py`（任意の `--out` 先）を利用してください。
+
 ## バックアップ
 
-`ops\backup.bat` は、SQLiteのオンラインバックアップAPIでDBをコピーし、`config` と `uploads` を `backups\<日時>\` へ保存します。
+`ops\backup.bat` は、SQLiteのオンラインバックアップAPIでDBをコピーし、`config` と `uploads` を `backups\<日時>\` へ保存します。**外部ディスクへ退避する**ことが目的です（前述の「アプリ内DB冗長化」とは役割が異なります）。
 
 ```bat
 ops\backup.bat
@@ -113,12 +147,15 @@ py ops\backup.py --out C:\backups\olive
 
 | ファイル | 内容 |
 |----------|------|
-| `logs/backend.log` | アプリケーションログ（ローテーション、5MB×3） |
-| `logs/backend-uvicorn.log` | uvicornの標準出力 |
+| `backend/logs/backend.log` | アプリケーションログ（ローテーション、5MB×3） |
+| `logs/backend-uvicorn.log` | uvicornの標準出力（watchdog起動時） |
 | `logs/frontend.log` | Next.jsの出力 |
 | `logs/monitor.log` | 単一構成の死活監視イベント |
 | `logs/redundant-monitor.log` | active/standbyの監視・再起動・昇格イベント |
-| `logs/backup.log` | バックアップ結果 |
+| `logs/backup.log` | 手動バックアップ（`ops/backup.py`）結果 |
+
+ログは2か所に分かれます。`backend/logs/` はバックエンド自身が書くアプリログ、
+`logs/`（リポジトリ直下）は watchdog / 監視 / 手動バックアップが書く運用ログです。
 
 ## 管理者パスワード
 
@@ -154,7 +191,7 @@ curl http://127.0.0.1:8000/api/health/ready
 curl http://127.0.0.1:8001/api/health
 
 # レスポンス例
-{"status":"ok","db_status":"ok","can_promote":true,"uptime_sec":1234.56}
+{"status":"ok","db_status":"ok","can_promote":true,"db_backup":{"enabled":true,"last_backup_at":"...","backup_dir":"backend/data/backups","files":3},"uptime_sec":1234.56}
 ```
 
 | 項目 | 確認方法 |
@@ -201,3 +238,5 @@ python -c "import sqlite3; c=sqlite3.connect('backups\<timestamp>\olive_msystem.
 - **DBが肥大化**: バックアップ後に、安全な場所で `PRAGMA wal_checkpoint(TRUNCATE)` または `VACUUM` を検討してください。
 - **UIにバックエンドの状態が反映されない**: `BackendStatusBanner` が表示するステータスを確認。`/api/health` のレスポンスと `BACKEND_URL` 等の環境変数を確認してください。
 - **お知らせが表示されない**: `GET /api/notifications` で通知データを確認し、`target_role` / `target_user_id` の設定を確認してください。
+- **自動バックアップが作られない**: active インスタンスで起動しているか確認（standby は作成しません）。`/api/health` の `db_backup.enabled` が `true` か、`last_backup_at` が起動から60秒+30分以上経過しても `null` のままか確認してください。ログは `backend/logs/backend.log` の `db backup written:` 一行です。
+- **appログが見つからない**: アプリのログは `backend/logs/backend.log`（リポジトリ直下の `logs/` には watchdog の `backend-uvicorn.log` と監視ログがあります）。

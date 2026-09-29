@@ -23,6 +23,7 @@
 | 土壌水分センサー | 外部API（小豆島フィールド）から土壌水分・温度・湿度を取得して表示 |
 | センサー異常監視・通知 | データ停止・水分値異常・API接続エラーを検知し、アプリ内＋Webhook/LINE で通知 |
 | アクティブ/スタンバイ冗長運用 | バックエンドを主・待機の2プロセスで起動し、主系障害時に主ポートで後継activeを起動 |
+| DB冗長化 | activeインスタンスが `DB_BACKUP_INTERVAL_MIN` ごとにSQLiteをオンラインバックアップ（世代ローテーション）。起動時にDB破損を検出したら最新バックアップへ自動復元 |
 | 農家アカウント | 農家は自分のデータのみ閲覧。管理者は全農家のデータ・アカウントを管理 |
 | 永不停止化（バックエンド） | DB・解析エンジンの一時障害でdegraded起動＋自動復旧。解析キューは永不停止ループ、解析フレーム単位の失敗分離、アップロードはチャンク書込（OOM対策）、SQLite busy_timeout |
 | エラー耐性化（フロントエンド） | ルート/ページ毎のエラーバウンダリ、非JSONレスポンス拒否（白画面化防止）、SDK的なAPIクライアントによる冪等なエラーハンドリング、watchdogの指数的バックオフ＋クラッシュループ検知 |
@@ -34,27 +35,30 @@
 olive-msystem/
 ├── backend/            FastAPI（Python）+ olive-p アルゴリズム
 │   ├── app/
-│   │   ├── main.py            # FastAPI ルート・APIエンドポイント
+│   │   ├── main.py            # FastAPI ルート・APIエンドポイント・エラーハンドラ・各スレッド起動
 │   │   ├── analyzer.py        # olive-p の Analyzer / VideoProcessor をラップ
-│   │   ├── errors.py          # 機械判別可能なAPIエラーコード（ERROR_CODES）
+│   │   ├── errors.py          # 機械判別可能なAPIエラーコード（ERROR_CODES）とエラー形式
 │   │   ├── translate_report.py# 解析レポートの日本語訳（テンプレート翻訳）
 │   │   ├── health.py          # 体調スコア → キャラクター状態のマッピング
 │   │   ├── runner.py          # 連続アップロード・解析のバックグラウンドキュー
-│   │   ├── storage.py         # SQLite 永続化 (users / videos / images / observations ...)
-│   │   ├── auth.py            # JWT認証・ロール判定（farmer / admin）
+│   │   ├── storage.py         # SQLite 永続化 (users / sessions / videos / images / observations ...)
+│   │   ├── auth.py            # トークン認証（SQLiteセッション）・ロール判定（farmer / admin）
 │   │   ├── soil_moisture.py   # 土壌水分センサーAPIとの連携
 │   │   ├── sensor_alerts.py   # センサー異常の監視・通知（状態機械・エスカレーション）
 │   │   ├── captured.py        # 撮影時刻の取得・解析
 │   │   ├── config.py          # パス・設定・環境変数
+│   │   ├── db_redundancy.py   # SQLiteオンラインバックアップ・世代ローテーション・破損時自動復元
 │   │   └── models.py          # Pydantic リクエストモデル
 │   ├── tools/           # 補助スクリプト（assign_sample_tree_ids.py 等）
-│   ├── data/            # SQLite DB（olive_msystem.db）
+│   ├── data/            # SQLite DB（olive_msystem.db）+ backups/（DB自動バックアップ）
 │   ├── uploads/         # アップロードされた動画・画像（元ファイル）
 │   ├── storage/         # 解析済みフレーム・注釈付き画像
+│   ├── logs/            # アプリログ（backend.log）
 │   └── config/          # settings.json / soil_moisture.yaml
 ├── ops/                # 運用スクリプト（backup / monitor / redundant-*）
 ├── docs/               # ドキュメント（architecture / api / operations / farm-map / sensor-alerts 等）
-└── frontend/           Next.js 14（App Router）+ Tailwind CSS v3
+├── logs/               # watchdog / 監視ログ（backend-uvicorn / frontend / monitor / backup 等）
+└── frontend/           Next.js 15（App Router）+ React 19 + Tailwind CSS v3
     ├── app/
     │   ├── (app)/       # 農家・一般ユーザー向けページ群
     │   ├── (admin)/     # 管理者向けページ（/admin）
@@ -195,6 +199,9 @@ ops\redundant-start.bat
 - **アップロードのチャンク書込**: 巨大ファイルでもメモリを一括消費せずチャンク毎に書込
   （OOM対策）。容量超過は `413 LIMIT_UPLOAD_TOO_LARGE` で当該ファイルのみ拒否。
 - **SQLite `busy_timeout`**: 同時書き込み時にロックエラーで落ちず待機します。
+- **DB自動バックアップと破損復元**: active インスタンスが `DB_BACKUP_INTERVAL_MIN` ごとに
+  SQLite のオンラインバックアップを `backend/data/backups/` へ世代ローテーション保存し、
+  起動時にDB破損を検出したら最新バックアップへ自動復元します（状態は `/api/health` の `db_backup`）。
 - 詳細は [docs/operations.md](docs/operations.md) を参照してください。
 
 ### フロントエンド（エラー耐性）
@@ -203,6 +210,9 @@ ops\redundant-start.bat
   予期せぬ例外でも白画面にならず、リトライやログイン画面へ誘導します。
 - **非JSONレスポンス拒否**: プロキシ経由でHTML等が返った場合に JSON と誤認せず明示エラー
   （白画面化防止、`frontend/lib/api.ts`）。
+- **API再試行（idempotent限定）**: 冪等なリクエスト（GET/HEAD/OPTIONS）のみ、`408` / `429` / `5xx` /
+  タイムアウト時に指数的バックオフ＋ジッターで最大3回再試行します（`RETRY_ATTEMPTS=3`、
+  `250ms×2^n`、上限2秒）。**POST/PUT/DELETE は二重送信を防ぐため再試行しません**。
 - **watchdog**: `run_backend.bat` / `run_frontend.bat`（`start.bat` から同時起動）が
   プロセスを監視し、クラッシュ時は指数的バックオフで再起動。クラッシュループ検知（10秒未満の
   即死を連続15回で60秒待機）と前提チェック（venv存在確認等）付き。
@@ -219,7 +229,7 @@ curl http://127.0.0.1:8000/api/health/ready
 # 冗長構成: standby ヘルスチェック
 curl http://127.0.0.1:8001/api/health
 
-# API 認証テスト（JWT トークンが必要）
+# API 認証テスト（Bearer トークンが必要）
 $token = (curl http://127.0.0.1:8000/api/auth/login -Method POST -Body '{"username":"admin","password":"xxx"}' -ContentType 'application/json' | ConvertFrom-Json).token
 curl http://127.0.0.1:8000/api/auth/me -H "Authorization: Bearer $token"
 
@@ -249,7 +259,8 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 ## 運用スクリプト
 
 - `ops\start-monitor.bat` … `ops\monitor.ps1` を起動（`/api/health` を30秒間隔で
-  監視し、バックエンドが落ちたら自動復旧。ログは `logs\monitor.log`）
+  監視し、バックエンドが落ちたら自動復旧。ログは `logs\monitor.log`。
+  `-FailureThreshold`・`-StartupGraceSec` で再起動閾値と起動猶予を調整可）
 - `ops\backup.bat` … `ops\backup.py` でDBとデータを一貫バックアップ
   （`backups\<日時>\` へ。`python ops\backup.py --keep 10 --verify` で整合性確認）
 - `ops\redundant-monitor.ps1` … active/standbyのヘルス監視、再起動、昇格
@@ -262,7 +273,11 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 
 ## アカウント（認証）
 
-- JWT（`Authorization: Bearer <token>`）による認証。トークンは `POST /api/auth/login` で取得。
+- **Bearerトークン**（`Authorization: Bearer <token>`）による認証。**JWTではなく**、
+  ログイン時に発行される**不透明なセッショントークン**（`sessions` テーブルに保存、有効期限30日）です。
+  トークンは `POST /api/auth/login`（または `POST /api/auth/register`）のレスポンス `token` で取得。
+  ログインのたびに既存セッションが置き換わり、1ユーザーにつき1つの有効なセッションになります。
+  明示的なログアウトは `POST /api/auth/logout`。パスワードは保存せず PBKDF2-HMAC-SHA256 の塩付きハッシュで保管します。
 - ロールは **farmer**（農家）と **admin**（管理者）。
   - 農家は自分のデータのみ閲覧・編集可能。
   - 管理者のみ `/admin` と `/api/admin/*` にアクセス可能。それ以外のロールが `/admin` を開いた場合は `/forbidden`（403ページ）へ誘導。
@@ -276,6 +291,7 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 | 項目 | 場所 |
 |------|------|
 | SQLite DB | `backend/data/olive_msystem.db` |
+| DB自動バックアップ | `backend/data/backups/`（`olive_msystem.<UTC時刻>.db`、`DB_BACKUP_KEEP` 世代） |
 | アップロード済み動画・画像 | `backend/uploads/` |
 | 解析済みフレーム・注釈画像 | `backend/storage/<video_id>/` など |
 | アプリ設定（しきい値・サイト名等） | `backend/config/settings.json` |
@@ -303,8 +319,9 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 
 ### 認証 (`/api/auth`)
 
-- `POST /api/auth/login` … JWTトークン取得
-- `POST /api/auth/register` … 新規ユーザー登録（農家）
+- `POST /api/auth/login` … ログイン → `{token, user}`（Bearerセッショントークン）
+- `POST /api/auth/register` … 新規ユーザー登録（農家、自動ログイン）
+- `POST /api/auth/logout` … セッション削除
 - `GET /api/auth/me`, `PUT /api/auth/profile`, `GET/PUT /api/auth/preferences` … 自身の情報
 
 ### 動画 (`/api/videos`)
@@ -348,7 +365,11 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 
 - `GET /api/notifications` `/unread-count` `/read` … 通知
 - `GET /api/admin/stats` `/farmers` `/settings` … 管理者API（要admin権限）
-- `GET /api/health` … 死活監視用（認証なし、DB状態とロールを含む）
+- `PUT /api/admin/farmers/{id}/password` / `DELETE /api/admin/farmers/{id}` … 農家パスワード変更・削除（管理者）
+- `POST /api/admin/observations/clear` … 観測データ一括クリア（管理者）
+- `GET /api/versions` … ソフトウェアスタックの構成・バージョン（認証なし）
+- `GET /api/settings` … サイト表示設定の公開読み取り（認証なし）
+- `GET /api/health` … 死活監視用（認証なし、DB状態・ロール・`db_backup`・件数を含む）
 - `GET /api/health/ready` … レディネス監視用（active 且つDB利用可能な場合のみ200）
 
 ### 静的ファイル
@@ -360,6 +381,8 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 
 `/farm-map` は、**樹木台帳（`trees` テーブル）**に登録された樹木を畝・列のグリッド上に
 配置し、各樹木の最新の体調（健康/良好/注意/要管理/未観測）を色分けして表示します。
+表示グリッドは **畝2行 × 3列**（`COLS=3`）が基準で、台帳の `row_num` / `col_num` から
+決定的な座標 (`x = 70 + (col-1)*118 + 59` / `y = 70 + (row-1)*130 + 65`) に配置されます。
 
 - 台帳は農家ごとに管理（`user_id` + `tree_id` で一意）。管理画面の樹木台帳テーブルで
   登録・編集・削除、一括importが可能。**管理者は対象農家を指定**します。
