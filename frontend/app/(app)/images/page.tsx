@@ -657,13 +657,14 @@ export default function ImageAnalysisPage() {
                             src={annotatedUrl}
                             alt="解析結果サムネイル"
                             className="h-11 w-16 shrink-0 rounded-md object-cover ring-1 ring-violet-200"
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
                           />
                         ) : (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={originalUrl(img)}
                             alt={img.filename}
-                            className="h-11 w-11 shrink-0 rounded-lg border border-neutral-200 object-cover"
+                            className="h-11 w-16 shrink-0 rounded-md border border-neutral-200 object-cover"
                             onError={(e) => { e.currentTarget.style.display = 'none'; }}
                           />
                         )}
@@ -835,7 +836,7 @@ export default function ImageAnalysisPage() {
                         {healthJa(stateOf(res))}
                       </span>
                     )}
-                    <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 pb-1 pt-6 text-left text-[11px] font-medium text-white" title={img.filename}>
+                    <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 pb-1 pt-6 text-left text-[11px] font-medium leading-snug text-white line-clamp-2 break-words" title={img.filename}>
                       {img.filename}
                     </span>
                   </button>

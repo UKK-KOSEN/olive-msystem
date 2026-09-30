@@ -4,21 +4,30 @@
 
 ## 単一構成の起動と watchdog
 
-`start.bat` は1つのバックエンド（既定値 `127.0.0.1:8000`）と1つのフロントエンド（既定値 `3001`）を起動し、各プロセスを自動再起動します。
+`start.bat`（Windows）または `./start.sh`（Linux）は、1つのバックエンド（既定値 `127.0.0.1:8000`）と1つのフロントエンド（既定値 `3001`）を起動し、各プロセスを自動再起動します。
 
-| スクリプト | 起動するもの |
+| スクリプト（Windows / Linux） | 起動するもの |
 |------------|--------------|
-| `run_backend.bat` | `uvicorn app.main:app`（ログは `logs/backend-uvicorn.log`） |
-| `run_frontend.bat` | `next start`（ログは `logs/frontend.log`） |
+| `run_backend.bat` / `run_backend.sh` | `uvicorn app.main:app`（ログは `logs/backend-uvicorn.log`） |
+| `run_frontend.bat` / `run_frontend.sh` | `next start`（ログは `logs/frontend.log`） |
 
 初回起動時は以下をすべて自動で行います（手動構築は不要です）:
 
+- **前提ツールの自動導入**
+  - Windows: `start.bat` が winget で不足ツールを自動インストールします
+    （`Git.Git` / `Python.Python.3.12` / `OpenJS.NodeJS.LTS` / `Gyan.FFmpeg`）。
+    winget が無い・導入に失敗した場合は明確なエラーで停止します。
+  - Linux: `start.sh` が `apt-get` で `git python3 python3-venv python3-pip ffmpeg curl` を導入し、
+    Node.js が無い／18未満の場合は NodeSource のLTS（`setup_20.x`）を導入します。
+    rootで無い場合は sudo パスワードが1回求められます。
 - Python 仮想環境の作成＋`requirements.txt` のインストール/更新（常に idempotent に実行）
+  - Windows: `backend\.venv\Scripts\python.exe` / Linux: `backend/.venv/bin/python`
 - `frontend\node_modules` が無ければ `npm install`、`.next` が無ければ `npm run build`
-- **検出エンジン (olive-p) の自動解決**: `OLIVE_P_DIR` → `external\olive-p` → 従来の `Downloads\olive-p` の順に検出し、どれも無ければ `git clone https://github.com/UKK-KOSEN/olive-vision-ai.git external\olive-p` で取得（git 未導入時は明確なエラーで停止）
-- `ops\check_env.py` による環境チェック（olive-p / upscaler / ffmpeg）
+- **検出エンジン (olive-p) の自動解決**: `OLIVE_P_DIR` → `external/olive-p` → 従来の `Downloads\olive-p`（Linux: `~/Downloads/olive-p`）の順に検出し、どれも無ければ `git clone https://github.com/UKK-KOSEN/olive-vision-ai.git external/olive-p` で取得
+- `ops/check_env.py` による環境チェック（git / python / node / npm / ffmpeg / olive-p / upscaler）
+- 環境チェックで FAIL 項目がある場合は結果を表示してから続行します（`check` 引数なら起動せず終了）
 
-手動で行う場合は以下と同等です:
+手動で行う場合は以下と同等です（Windows）:
 
 ```powershell
 cd backend
@@ -28,6 +37,8 @@ cd ..\frontend
 npm install
 npm run build
 ```
+
+Linux の場合は `py` → `python3`、パスは `backend/.venv/bin/python`、手動起動は `./start.sh backend` / `./start.sh frontend` です。
 
 `BACKEND_HOST`、`BACKEND_PORT`、`FRONTEND_PORT`、`BACKEND_URL` を設定するとポートとAPIプロキシ先を変更できます。
 
@@ -247,3 +258,6 @@ python -c "import sqlite3; c=sqlite3.connect('backups\<timestamp>\olive_msystem.
 - **お知らせが表示されない**: `GET /api/notifications` で通知データを確認し、`target_role` / `target_user_id` の設定を確認してください。
 - **自動バックアップが作られない**: active インスタンスで起動しているか確認（standby は作成しません）。`/api/health` の `db_backup.enabled` が `true` か、`last_backup_at` が起動から60秒+30分以上経過しても `null` のままか確認してください。ログは `backend/logs/backend.log` の `db backup written:` 一行です。
 - **appログが見つからない**: アプリのログは `backend/logs/backend.log`（リポジトリ直下の `logs/` には watchdog の `backend-uvicorn.log` と監視ログがあります）。
+- **Windowsで前提ツールが自動導入されない**: winget（App Installer）が入っているか確認してください。導入後に「見つからない」と出た場合は、新しいコマンドプロンプトで `start.bat` を再実行してください（PATH反映に新しいシェルが必要です）。
+- **Linuxで前提ツールの導入に失敗する**: rootで無い場合は sudo パスワードの入力を求められます。ネットワークが制限されている場合は `apt-get` と NodeSource（`curl https://deb.nodesource.com/setup_20.x`）への到達を確認してください。
+- **Linuxの watchdog を止めたい**: `pkill -f run_backend.sh`・`pkill -f run_frontend.sh` で停止できます（ログは `logs/backend-uvicorn.log` / `logs/frontend.log`）。

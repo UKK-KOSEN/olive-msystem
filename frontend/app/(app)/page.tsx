@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
   formatBytes,
@@ -735,7 +735,7 @@ export default function Dashboard() {
                 <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-12 lg:grid-cols-12">
                   <button
                     onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
-                    className="group relative h-36 w-full overflow-hidden rounded-lg bg-neutral-100 sm:col-span-3 sm:h-20 lg:col-span-2"
+                    className="group relative h-36 w-full overflow-hidden rounded-lg bg-neutral-100 sm:col-span-3 sm:h-24 lg:col-span-2"
                     aria-label={`動画${v.filename}を再生`}
                     title="クリックでプレビュー再生"
                   >
@@ -1320,8 +1320,8 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
               const st = o.health_state;
               const isOpen = expanded === g.key;
               return (
-                <div key={g.key}>
-                  <tr className={isOpen ? 'border-t border-neutral-100 bg-neutral-50' : 'border-t border-neutral-100 hover:bg-neutral-50/60'}>
+<Fragment key={g.key}>
+                <tr className={isOpen ? 'border-t border-neutral-100 bg-neutral-50' : 'border-t border-neutral-100 hover:bg-neutral-50/60'}>
                     <td className="py-2.5 pr-4 font-medium tabular-nums text-neutral-700">
                       {formatTimestamp(o.timestamp_sec)}
                     </td>
@@ -1363,7 +1363,7 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                       </td>
                     </tr>
                   )}
-                </div>
+              </Fragment>
               );
             })}
           </tbody>

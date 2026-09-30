@@ -6,6 +6,8 @@ rem ================================================================
 rem  olive-msystem - all-in-one launcher
 rem  Bootstraps everything a fresh checkout needs and starts the
 rem  backend/frontend watchdog processes:
+rem    - prerequisite tools (git / Python / Node / ffmpeg, auto-installed via
+rem      winget when missing - PATH is rebuilt afterwards in this same session)
 rem    - Python venv       (backend\.venv, auto-created)
 rem    - backend deps      (pip install -r backend\requirements.txt, idempotent)
 rem    - olive-p engine    (cloned to external\olive-p on first run unless
@@ -32,11 +34,91 @@ echo ================================================================
 echo   olive-msystem launcher (watchdog + detection engine)
 echo   Backend  (FastAPI)  : http://%BACKEND_HOST%:%BACKEND_PORT%
 echo   Frontend (Next.js)  : http://localhost:%FRONTEND_PORT%
-echo   Duplicate-start guard + auto-restart enabled
+echo   Prerequisites auto-install + duplicate-start guard enabled
 echo ================================================================
 echo.
 
-rem ---- 0. detection engine (olive-p) source ----
+rem ---- 0. prerequisite tools (git / python / node / ffmpeg) ----
+rem    Auto-installs missing tools via winget so a fresh Windows machine
+rem    needs zero manual steps. After installing, PATH is rebuilt from the
+rem    registry so the new tools resolve in THIS session (no window restart).
+set NEED_INSTALL=0
+set NEEDED_TOOLS=
+
+where git >nul 2>&1
+if not errorlevel 1 ( echo [OK]   git     : found ) else ( set NEED_INSTALL=1 & set NEEDED_TOOLS=!NEEDED_TOOLS! git )
+where py >nul 2>&1
+if not errorlevel 1 ( echo [OK]   python  : found ^(py launcher^) ) else (
+  where python >nul 2>&1
+  if not errorlevel 1 ( echo [OK]   python  : found ) else ( set NEED_INSTALL=1 & set NEEDED_TOOLS=!NEEDED_TOOLS! python )
+)
+where node >nul 2>&1
+if not errorlevel 1 ( echo [OK]   node    : found ) else ( set NEED_INSTALL=1 & set NEEDED_TOOLS=!NEEDED_TOOLS! node )
+where npm >nul 2>&1
+if not errorlevel 1 ( echo [OK]   npm     : found ) else ( set NEED_INSTALL=1 & set NEEDED_TOOLS=!NEEDED_TOOLS! npm )
+where ffmpeg >nul 2>&1
+if not errorlevel 1 ( echo [OK]   ffmpeg  : found ) else ( set NEED_INSTALL=1 & set NEEDED_TOOLS=!NEEDED_TOOLS! ffmpeg )
+
+if "!NEED_INSTALL!"=="1" (
+  echo.
+  echo [SETUP] Missing tools:!NEEDED_TOOLS!
+  echo [SETUP] Installing prerequisites via winget ^(one-time, may take a few minutes^)...
+  where winget >nul 2>&1
+  if errorlevel 1 goto :err_winget
+
+  where git >nul 2>&1
+  if errorlevel 1 (
+    winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
+    if errorlevel 1 goto :err_tools
+  )
+  where py >nul 2>&1
+  if errorlevel 1 (
+    where python >nul 2>&1
+    if errorlevel 1 (
+      winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
+      if errorlevel 1 goto :err_tools
+    )
+  )
+  where node >nul 2>&1
+  if errorlevel 1 (
+    winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
+    if errorlevel 1 goto :err_tools
+  )
+  where npm >nul 2>&1
+  if errorlevel 1 (
+    winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
+    if errorlevel 1 goto :err_tools
+  )
+  where ffmpeg >nul 2>&1
+  if errorlevel 1 (
+    winget install --id Gyan.FFmpeg -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
+    if errorlevel 1 goto :err_tools
+  )
+
+  rem --- refresh PATH from registry (system + user) for this session ---
+  for /F "skip=2 tokens=2,*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYS_PATH=%%B"
+  for /F "skip=2 tokens=2,*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USER_PATH=%%B"
+  set "PATH=%SYS_PATH%;%USER_PATH%;%SystemRoot%\System32;%SystemRoot%"
+
+  echo.
+  echo [SETUP] Verifying installed tools...
+  where git >nul 2>&1
+  if errorlevel 1 goto :err_tools2
+  where py >nul 2>&1
+  if errorlevel 1 (
+    where python >nul 2>&1
+    if errorlevel 1 goto :err_tools2
+  )
+  where node >nul 2>&1
+  if errorlevel 1 goto :err_tools2
+  where npm >nul 2>&1
+  if errorlevel 1 goto :err_tools2
+  where ffmpeg >nul 2>&1
+  if errorlevel 1 goto :err_tools2
+  echo [OK]   Prerequisites installed and ready.
+)
+
+rem ---- 1. detection engine (olive-p) source ----
 rem    Prefer an explicit OLIVE_P_DIR; otherwise use an existing checkout
 rem    (bundled external\olive-p or the legacy well-known path). Only when
 rem    nothing exists do we clone from GitHub so a fresh machine boots fully
@@ -58,7 +140,7 @@ if defined OLIVE_P_DIR (
   echo [OK]   Detection engine cloned: %EXTERNAL_OLIVE_P%
 )
 
-rem ---- 1. Python venv (create when missing) + backend deps ----
+rem ---- 2. Python venv (create when missing) + backend deps ----
 if not exist "%VENV_PY%" (
   echo [SETUP] Creating Python venv...
   py -m venv backend\.venv
@@ -71,7 +153,7 @@ echo [SETUP] Ensuring backend Python deps are up to date...
 if errorlevel 1 goto :err_venv
 echo [OK]   Backend deps ready.
 
-rem ---- 2. frontend node_modules (install when missing) ----
+rem ---- 3. frontend node_modules (install when missing) ----
 if not exist "frontend\node_modules" (
   echo [SETUP] npm install frontend deps...
   pushd frontend
@@ -83,7 +165,7 @@ if not exist "frontend\node_modules" (
   echo [OK]   node_modules found.
 )
 
-rem ---- 3. frontend build (.next), skipped when running backend only ----
+rem ---- 4. frontend build (.next), skipped when running backend only ----
 if /I not "%~1"=="backend" (
   if not exist "frontend\.next\BUILD_ID" (
     echo [SETUP] Building frontend via npm run build...
@@ -97,7 +179,7 @@ if /I not "%~1"=="backend" (
   )
 )
 
-rem ---- 4. detection engine check (olive-p / upscaler / ffmpeg) ----
+rem ---- 5. detection engine check (olive-p / upscaler / ffmpeg) ----
 echo.
 echo [CHECK] Detection engine (olive-p / upscaler / ffmpeg)...
 "%VENV_PY%" ops\check_env.py
@@ -109,7 +191,7 @@ if not "!ENV_RC!"=="0" (
   pause >nul
 )
 
-rem ---- 5. route modes ----
+rem ---- 6. route modes ----
 if "%~1"=="check" goto :run_check
 if "%~1"=="backend" goto :run_backend
 if "%~1"=="frontend" goto :run_frontend
@@ -138,6 +220,31 @@ echo.
 echo [ERROR] git was not found, but it is required to fetch the olive-p
 echo         detection engine. Install Git for Windows (https://git-scm.com)
 echo         and re-run start.bat, or set OLIVE_P_DIR to an existing olive-p.
+pause
+exit /b 1
+
+:err_winget
+echo.
+echo [ERROR] The winget package manager was not found, but missing
+echo         prerequisites need to be installed. Install the "App Installer"
+echo         from the Microsoft Store (or install Git / Python / Node / ffmpeg
+echo         manually), then re-run start.bat.
+pause
+exit /b 1
+
+:err_tools
+echo.
+echo [ERROR] winget failed to install one or more prerequisite tools
+echo         (git / python / node / ffmpeg). Try installing them manually and
+echo         re-run start.bat, or set OLIVE_P_DIR to an existing olive-p.
+pause
+exit /b 1
+
+:err_tools2
+echo.
+echo [ERROR] Prerequisites were installed but could not be found on PATH.
+echo         Close this window, open a NEW Command Prompt and re-run start.bat
+echo         (the new tools need a fresh shell to appear in PATH).
 pause
 exit /b 1
 

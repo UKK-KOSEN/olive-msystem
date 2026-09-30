@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Observation } from '@/lib/api';
 
 export function healthJa(label: string): string {
@@ -95,6 +95,10 @@ const ZONES: { label: string; color: string; lo: number; hi: number }[] = [
 
 type Pt = { score: number; obs: Observation; t: number; x: number; y: number };
 
+/**
+ * Simple health-score line chart: a straight polyline (no smoothing, no area
+ * gradient), colored dots per observation and a light hover tooltip.
+ */
 export function TrendChart({
   obs,
   width = 720,
@@ -108,21 +112,21 @@ export function TrendChart({
   minWidth?: number;
   showSummary?: boolean;
 }) {
-  const gradId = useId().replace(/[^a-zA-Z0-9]/g, '');
   const pad = { left: 48, right: 20, top: 24, bottom: 38 };
   const innerW = width - pad.left - pad.right;
   const innerH = height - pad.top - pad.bottom;
 
   const svgRef = useRef<SVGSVGElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  const pts = useMemo(() => {
-    return obs
-      .map((o) => ({ score: obsScore(o), obs: o, t: parseDate(o.observed_at) }))
-      .filter((p): p is { score: number; obs: Observation; t: number } => p.score != null)
-      .sort((a, b) => a.t - b.t);
-  }, [obs]);
+  const pts = useMemo(
+    () =>
+      obs
+        .map((o) => ({ score: obsScore(o), obs: o, t: parseDate(o.observed_at) }))
+        .filter((p): p is { score: number; obs: Observation; t: number } => p.score != null)
+        .sort((a, b) => a.t - b.t),
+    [obs],
+  );
 
   const isEmpty = pts.length === 0;
   const tMin = isEmpty ? 0 : pts[0].t;
@@ -138,34 +142,39 @@ export function TrendChart({
     return pts.map((p) => ({ ...p, x: xFor(p.t), y: yFor(p.score) }));
   }, [pts, tMin, span, innerW, innerH, isEmpty]);
 
-  const linePath = smoothPath(ptsF, pad.top, pad.top + innerH);
-  const areaPath =
-    ptsF.length > 1
-      ? linePath + ` L ${ptsF[ptsF.length - 1].x} ${pad.top + innerH} L ${ptsF[0].x} ${pad.top + innerH} Z`
-      : '';
+  const linePath = ptsF.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  const showDots = ptsF.length <= 64;
 
-  const xTicks = useMemo(() => {
+  const xTicks = useMemo<Pt[]>(() => {
     if (ptsF.length === 0) return [];
     const maxN = Math.max(2, Math.min(4, Math.floor(innerW / 120)));
     const indices = Array.from({ length: maxN }, (_, i) =>
-      Math.round((i / (maxN - 1 || 1)) * (ptsF.length - 1))
+      Math.round((i / (maxN - 1 || 1)) * (ptsF.length - 1)),
     );
     const unique = [...new Set(indices)];
-    if (unique[unique.length - 1] !== ptsF.length - 1) {
-      unique[unique.length - 1] = ptsF.length - 1;
-    }
+    if (unique[unique.length - 1] !== ptsF.length - 1) unique[unique.length - 1] = ptsF.length - 1;
     return unique.map((index) => ptsF[index]);
   }, [ptsF, innerW]);
 
+  if (isEmpty) {
+    return <p className="py-6 text-center text-sm text-neutral-400">スコアデータがありません。</p>;
+  }
+
+  const first = ptsF[0];
+  const last = ptsF[ptsF.length - 1];
+  const lastColor = healthColor(last.obs.health_state?.label ?? '');
+  const change = last.score - first.score;
+  const changeLabel = `${change >= 0 ? '+' : ''}${(change * 100).toFixed(1)}点`;
+  const hover = hoverIdx != null ? ptsF[hoverIdx] : null;
+
   const onMove = (e: React.MouseEvent) => {
     const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    if (rect.width === 0) return;
-    if (ptsF.length === 0) {
+    if (!svg || ptsF.length === 0) {
       setHoverIdx(null);
       return;
     }
+    const rect = svg.getBoundingClientRect();
+    if (rect.width === 0) return;
     const vx = (e.clientX - rect.left) * (width / rect.width);
     let best = 0;
     let bestD = Infinity;
@@ -178,46 +187,6 @@ export function TrendChart({
     }
     setHoverIdx(best);
   };
-
-  const tooltip = useMemo(() => {
-    if (hoverIdx == null || ptsF.length === 0) return null;
-    const p = ptsF[hoverIdx];
-    const svg = svgRef.current;
-    const wrap = wrapRef.current;
-    if (!svg || !wrap) return null;
-    const rect = svg.getBoundingClientRect();
-    const sx = rect.width / width;
-    const sy = rect.height / height;
-    const TW = 240;
-    const TH = 108;
-    let left = p.x * sx + 14;
-    if (left + TW > wrap.clientWidth - 8) left = p.x * sx - TW - 14;
-    if (left < 8) left = 8;
-    let top = p.y * sy - TH / 2;
-    if (top < 8) top = p.y * sy + 14;
-    if (top + TH > wrap.clientHeight - 8) top = Math.max(8, wrap.clientHeight - TH - 8);
-    return { left, top, p };
-  }, [hoverIdx, ptsF, width, height]);
-
-  if (isEmpty) {
-    return <p className="py-6 text-center text-sm text-neutral-400">スコアデータがありません。</p>;
-  }
-
-  const first = ptsF[0];
-  const last = ptsF[ptsF.length - 1];
-  const lastColor = healthColor(last.obs.health_state?.label ?? '');
-  const change = last.score - first.score;
-  const changeLabel = `${change >= 0 ? '+' : ''}${(change * 100).toFixed(1)}点`;
-  const showDots = ptsF.length <= 32;
-
-  const pill = (() => {
-    const w = 64;
-    const h = 24;
-    const bx = Math.max(pad.left + w / 2 + 4, Math.min(width - pad.right - w / 2 - 4, last.x));
-    let by = last.y - h - 16;
-    if (by < pad.top + 2) by = last.y + 16;
-    return { bx, by, w, h };
-  })();
 
   return (
     <div className="w-full">
@@ -234,7 +203,10 @@ export function TrendChart({
           </div>
           <div className="text-right">
             <p className="label">前回から</p>
-            <p className="mt-1 text-sm font-bold tabular-nums" style={{ color: change >= 0 ? '#3b8a4a' : '#b8433a' }}>
+            <p
+              className="mt-1 text-sm font-bold tabular-nums"
+              style={{ color: change >= 0 ? '#3b8a4a' : '#b8433a' }}
+            >
               {changeLabel}
             </p>
             <p className="mt-0.5 text-[11px] text-neutral-400">観測 {ptsF.length}件</p>
@@ -242,7 +214,7 @@ export function TrendChart({
         </div>
       )}
 
-      <div ref={wrapRef} className="relative w-full">
+      <div className="relative w-full">
         <svg
           ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
@@ -253,13 +225,6 @@ export function TrendChart({
           onMouseMove={onMove}
           onMouseLeave={() => setHoverIdx(null)}
         >
-          <defs>
-            <linearGradient id={`grad-${gradId}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={lastColor} stopOpacity="0.16" />
-              <stop offset="100%" stopColor={lastColor} stopOpacity="0" />
-            </linearGradient>
-          </defs>
-
           {[0, 0.25, 0.5, 0.75, 1].map((v) => {
             const y = yFor(v);
             const isBase = v === 0;
@@ -290,7 +255,6 @@ export function TrendChart({
                   : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
             return (
               <g key={i}>
-                <line x1={p.x} y1={pad.top} x2={p.x} y2={pad.top + innerH} stroke="#f1f3ee" strokeWidth="1" />
                 <text x={p.x} y={height - 9} textAnchor="middle" fontSize="11" fill="#6b746c" fontWeight="600">
                   {label}
                 </text>
@@ -298,76 +262,62 @@ export function TrendChart({
             );
           })}
 
-          {areaPath && <path d={areaPath} fill={`url(#grad-${gradId})`} />}
-          {ptsF.length > 1 && (
+          {ptsF.length > 1 && linePath && (
             <path
               d={linePath}
               fill="none"
               stroke="#2b2b2b"
-              strokeWidth="3"
+              strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           )}
 
-          {hoverIdx != null && (
-            <line
-              x1={ptsF[hoverIdx].x}
-              y1={pad.top}
-              x2={ptsF[hoverIdx].x}
-              y2={pad.top + innerH}
-              stroke="#c3c9bf"
-              strokeWidth="1"
-              strokeDasharray="3 3"
-            />
-          )}
-
-          {ptsF.map((p, i) => {
-            const isLast = i === ptsF.length - 1;
-            const color = healthColor(p.obs.health_state?.label ?? '');
-            if (isLast) {
+          {showDots &&
+            ptsF.map((p, i) => {
+              const isLast = i === ptsF.length - 1;
+              const color = healthColor(p.obs.health_state?.label ?? '');
               return (
                 <g key={i}>
-                  <circle cx={p.x} cy={p.y} r={hoverIdx === i ? 13 : 10} fill={color} opacity="0.18" />
-                  <circle cx={p.x} cy={p.y} r={7} fill={color} stroke="#fff" strokeWidth="2.5" />
+                  <title>
+                    {new Date(p.t).toLocaleString('ja-JP', {
+                      year: 'numeric',
+                      month: 'numeric',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    {'\n'}
+                    {(p.score * 100).toFixed(1)}点（{healthJa(p.obs.health_state?.label ?? '')}）
+                  </title>
+                  {isLast ? (
+                    <>
+                      <circle cx={p.x} cy={p.y} r={hoverIdx === i ? 12 : 9} fill={color} opacity="0.18" />
+                      <circle cx={p.x} cy={p.y} r={6} fill={color} stroke="#fff" strokeWidth="2.5" />
+                    </>
+                  ) : (
+                    <circle cx={p.x} cy={p.y} r={hoverIdx === i ? 6 : 4} fill={color} stroke="#fff" strokeWidth="2" />
+                  )}
                 </g>
               );
-            }
-            if (!showDots) return null;
-            return (
-              <circle
-                key={i}
-                cx={p.x}
-                cy={p.y}
-                r={hoverIdx === i ? 6 : 4.5}
-                fill={color}
-                stroke="#fff"
-                strokeWidth="2"
-                style={{ transition: 'r 0.12s ease' }}
-              />
-            );
-          })}
+            })}
 
-          <rect x={pill.bx - pill.w / 2} y={pill.by} width={pill.w} height={pill.h} rx={12} fill="#ffffff" stroke={lastColor} strokeWidth="2" />
-          <circle cx={pill.bx - pill.w / 2 + 13} cy={pill.by + pill.h / 2} r={4} fill={lastColor} />
-          <text
-            x={pill.bx - pill.w / 2 + 18}
-            y={pill.by + 16.5}
-            fontSize="12.5"
-            fontWeight="800"
-            fill={lastColor}
-          >
-            {(last.score * 100).toFixed(0)}点
-          </text>
+          {!showDots && ptsF.length > 0 && (
+            <circle cx={last.x} cy={last.y} r={6} fill={lastColor} stroke="#fff" strokeWidth="2.5" />
+          )}
         </svg>
 
-        {tooltip && (
+        {hover && (
           <div
-            className="pointer-events-none absolute z-10 rounded-lg border border-neutral-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur-sm"
-            style={{ left: tooltip.left, top: tooltip.top, width: 240 }}
+            className="pointer-events-none absolute z-10 w-max max-w-[220px] rounded-lg border border-neutral-200 bg-white/95 px-3 py-2 shadow-lg"
+            style={{
+              left: `${(hover.x / width) * 100}%`,
+              top: `${(hover.y / height) * 100}%`,
+              transform: hover.y > height * 0.35 ? 'translate(-50%, calc(-100% - 12px))' : 'translate(-50%, 12px)',
+            }}
           >
             <div className="text-[11px] text-neutral-400">
-              {new Date(tooltip.p.t).toLocaleString('ja-JP', {
+              {new Date(hover.t).toLocaleString('ja-JP', {
                 year: 'numeric',
                 month: 'numeric',
                 day: 'numeric',
@@ -376,13 +326,19 @@ export function TrendChart({
               })}
             </div>
             <div className="mt-0.5 flex items-center gap-2">
-              <span className="text-sm font-bold tabular-nums" style={{ color: healthColor(tooltip.p.obs.health_state?.label ?? '') }}>
-                {(tooltip.p.score * 100).toFixed(1)}点
+              <span
+                className="text-sm font-bold tabular-nums"
+                style={{ color: healthColor(hover.obs.health_state?.label ?? '') }}
+              >
+                {(hover.score * 100).toFixed(1)}点
               </span>
-              <StatePill label={healthJa(tooltip.p.obs.health_state?.label ?? '')} color={healthColor(tooltip.p.obs.health_state?.label ?? '')} />
+              <StatePill
+                label={healthJa(hover.obs.health_state?.label ?? '')}
+                color={healthColor(hover.obs.health_state?.label ?? '')}
+              />
             </div>
             <div className="mt-1 truncate text-[11px] text-neutral-500">
-              {tooltip.p.obs.filename || `観測 #${tooltip.p.obs.id}`}
+              {hover.obs.filename || `観測 #${hover.obs.id}`}
             </div>
           </div>
         )}
@@ -403,30 +359,6 @@ export function TrendChart({
       </div>
     </div>
   );
-}
-
-function smoothPath(
-  pts: { x: number; y: number }[],
-  minY: number,
-  maxY: number,
-): string {
-  if (pts.length === 0) return '';
-  if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
-
-  const clampY = (y: number) => Math.max(minY, Math.min(maxY, y));
-  let d = `M ${pts[0].x} ${pts[0].y}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] ?? pts[i];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[i + 2] ?? p2;
-    const c1x = p1.x + (p2.x - p0.x) / 6;
-    const c1y = clampY(p1.y + (p2.y - p0.y) / 6);
-    const c2x = p2.x - (p3.x - p1.x) / 6;
-    const c2y = clampY(p2.y - (p3.y - p1.y) / 6);
-    d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
-  }
-  return d;
 }
 
 function parseDate(iso?: string | null): number {

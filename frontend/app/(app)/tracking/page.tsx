@@ -472,7 +472,7 @@ export default function TrackingPage() {
                   </span>
 
                   {/* expand toggle */}
-                  <span className={`w-4 shrink-0 text-neutral-400 transition-transform ${open ? 'rotate-90' : ''}`}>›</span>
+                  <span className={`w-14 shrink-0 text-right text-neutral-400 transition-transform ${open ? 'rotate-90' : ''}`}>›</span>
                 </div>
 
                 {/* detail (collapsed) */}

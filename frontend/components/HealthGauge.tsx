@@ -34,8 +34,16 @@ export function HealthGauge({
   else if (clamped >= 0.35) stateLabel = '注意';
 
   return (
-    <div className="flex flex-col items-center gap-1">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`健康スコア: ${clamped.toFixed(2)}`}>
+    <div className="flex w-full max-w-full flex-col items-center gap-1">
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        className="block h-auto w-full max-w-full shrink-0"
+        style={{ maxWidth: size }}
+        role="img"
+        aria-label={`健康スコア: ${clamped.toFixed(2)}`}
+      >
         {/* Background circle */}
         <circle
           cx={center}

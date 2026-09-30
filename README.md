@@ -17,7 +17,7 @@
 | 体調判定 | `overall_health_score` から happy / good / caution / danger の4段階 |
 | 解析レポート日本語訳 | olive-p の英語レポート全文をテンプレート翻訳規則で日本語化 |
 | 動画プレビュー再生 | Range 対応ストリーミング（`/media`）でブラウザの `<video>` 再生・シーク対応 |
-| カレンダー・推移 | 観測履歴をカレンダー/グラフで閲覧、トレンド判定 |
+| カレンダー・推移 | 観測履歴をカレンダーで閲覧。体調スコアの推移はシンプルな折れ線グラフ（`TrendChart`）＋色分けドット＋ホバーで最新/直前スコア・件数・期間を表示 |
 | 農園マップ | 樹木台帳（レジストリ）で畝・列に樹木を配置し、体調を地図上に色分け表示 |
 | 通知 | 管理者から全ユーザー/特定ユーザーへ通知配信、通知一覧 |
 | 土壌水分センサー | 外部API（小豆島フィールド）から土壌水分・温度・湿度を取得して表示 |
@@ -106,19 +106,31 @@ olive-msystem/
 
 ## Getting Started（クイックスタート）
 
-1. **起動**: `start.bat` を実行するだけで、Python仮想環境・npmパッケージのインストール/更新、フロントエンドのビルド（`.next` が無い場合）、検出エンジン（olive-p / upscaler / ffmpeg）の確認をすべて自動で行い、バックエンドとフロントエンドの watchdog を起動します。olive-p が見つからない場合は初回起動時に `external\olive-p` へ自動クローンします（`OLIVE_P_DIR` 指定がある場合はそれが最優先）。
-2. **アクセス**: ブラウザで http://localhost:3001 を開いてください。
-3. **ログイン**: 管理者は初回起動時にランダムな10桁数字パスワードで作成されます（ログ確認 or `ADMIN_PASSWORD` 環境変数で固定）。
+1. **起動（Windows）**: `start.bat` を実行するだけで、前提ツール（git / Python / Node / ffmpeg）の不足分を **winget で自動インストール**し、Python仮想環境・npmパッケージのインストール/更新、フロントエンドのビルド（`.next` が無い場合）、検出エンジン（olive-p / upscaler / ffmpeg）の確認をすべて自動で行ったうえで、バックエンドとフロントエンドの watchdog を起動します。
+2. **起動（Linux）**: `./start.sh` を実行します（初回は `apt`＋NodeSource で前提ツールを自動導入。root で無い場合は sudo パスワードの入力が1回必要）。
+3. **初回だけ（両OS共通）**: olive-p がどこにも無ければ初回起動時に `external/olive-p` へ自動クローンします（`OLIVE_P_DIR` 指定がある場合はそれが最優先）。
+4. **アクセス**: ブラウザで http://localhost:3001 を開いてください（バックエンドは http://127.0.0.1:8000）。
+5. **ログイン**: 管理者は初回起動時にランダムな10桁数字パスワードで作成されます（ログ確認 or `ADMIN_PASSWORD` 環境変数で固定）。
+
+> **前提ツールの自動導入**: `start.bat` は winget（`Git.Git` / `Python.Python.3.12` / `OpenJS.NodeJS.LTS` / `Gyan.FFmpeg`）、`start.sh` は `apt-get`（＋Node.js 18未満時は NodeSource LTS）で不足ツールを自動インストールします。install後は同一セッション内でPATHを再構築して検証するため、作業者の手を煩わせません。既に全部揃っていれば何も起きず、環境チェック（`ops/check_env.py`）だけが実行されます。
 
 ## 開発起動
 
 ### 方法A: 一括起動（推奨）
 
+**Windows**
 ```powershell
 start.bat
 ```
 
+**Linux（Debian系 / Ubuntu / Raspberry Pi OS 等）**
+```bash
+./start.sh
+```
+
 バックエンドとフロントエンドの watchdog が自動で起動・監視します。
+`start.bat check` / `./start.sh check` で環境確認のみ実行でき（デーモン起動なし）、
+`backend` / `frontend` 引数でフォアグラウンド起動もできます。
 
 ### 方法B: 手動起動
 
@@ -132,6 +144,8 @@ cd frontend
 npm install
 npm run dev -- -p 3001
 ```
+
+Linux では `backend/.venv/bin/python` と `./start.sh backend` になります。
 
 ### 方法C: 冗長構成（active/standby）
 
@@ -153,7 +167,7 @@ ops\redundant-start.bat
 | `BACKEND_URL` | `http://127.0.0.1:8000` | Next.js の API プロキシ先（`next.config.mjs` rewrites） |
 | `MAX_UPLOAD_MB` | `2048` | アップロード1ファイルの容量上限（MB）。超過は `413 LIMIT_UPLOAD_TOO_LARGE` |
 | `WORKERS` | `2` | 解析キュー（runner）の並列ワーカー数 |
-| `OLIVE_P_DIR` | （環境依存） | olive-p 解析エンジンのパス（未指定時は `external\olive-p` → 従来の `Downloads\olive-p` の順に自動検出、見つからなければ `start.bat` が `external\olive-p` へ自動クローン） |
+| `OLIVE_P_DIR` | （環境依存） | olive-p 解析エンジンのパス（未指定時は `external/olive-p` → 従来の `Downloads\olive-p`（Linux: `~/Downloads/olive-p`）の順に自動検出、見つからなければ `start.bat` / `start.sh` が `external/olive-p` へ自動クローン） |
 | `ADMIN_PASSWORD` | （ランダム10桁） | 管理者パスワードの固定（未設定時は初回起動時にランダム生成） |
 | `OLIVE_INSTANCE_ID` | `standalone` | 冗長構成でのプロセス識別子（`primary` / `standby` 等） |
 | `OLIVE_INSTANCE_ROLE` | `active` | 冗長構成でのロール（`active` / `standby`） |
@@ -215,7 +229,9 @@ ops\redundant-start.bat
   `250ms×2^n`、上限2秒）。**POST/PUT/DELETE は二重送信を防ぐため再試行しません**。
 - **watchdog**: `run_backend.bat` / `run_frontend.bat`（`start.bat` から同時起動）が
   プロセスを監視し、クラッシュ時は指数的バックオフで再起動。クラッシュループ検知（10秒未満の
-  即死を連続15回で60秒待機）と前提チェック（venv存在確認等）付き。
+  即死を連続15回で60秒待機）と前提チェック（venv存在確認等）付き。Linux では
+  `run_backend.sh` / `run_frontend.sh`（`start.sh` から `nohup` で起動）が同等動作します。
+  ログは `logs\backend-uvicorn.log` / `logs\frontend.log`（Linux: `logs/` 配下に同じ）。
 
 ## 検証コマンド
 
@@ -258,6 +274,10 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 
 ## 運用スクリプト
 
+- `start.bat` … Windows 用一括起動（前提ツールのwinget自動導入＋watchdog起動）。`start.bat check` で環境確認のみ。
+- `start.sh` … Linux 用一括起動（`apt`＋NodeSource で前提ツール自動導入＋watchdog起動）。
+- `run_backend.bat` / `run_backend.sh` … バックエンド watchdog（指数的バックオフ＋クラッシュループ検知＋二重起動ガード）
+- `run_frontend.bat` / `run_frontend.sh` … フロントエンド watchdog（同上）
 - `ops\start-monitor.bat` … `ops\monitor.ps1` を起動（`/api/health` を30秒間隔で
   監視し、バックエンドが落ちたら自動復旧。ログは `logs\monitor.log`。
   `-FailureThreshold`・`-StartupGraceSec` で再起動閾値と起動猶予を調整可）
@@ -266,6 +286,8 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 - `ops\redundant-monitor.ps1` … active/standbyのヘルス監視、再起動、昇格
 - `ops\redundant-start.bat` … 主系（8000）と待機系（8001）を起動し、主系障害時に主ポートで後継activeを起動
 - `ops\redundant-stop.bat` … 冗長構成のバックエンド2ノードとフロントエンドを停止
+
+> 冗長構成（`ops\redundant-*`）と監視（`ops\monitor.ps1`）は現状 Windows（PowerShell）対応です。
 
 待機系はAPIの書き込みを拒否し、解析キューとセンサー監視スレッドを起動しません。SQLiteとローカルファイルは同一ホスト内で共有されるため、この構成はプロセス障害向けの冗長化です。ホスト障害にも対応するには、外部DBと共有ストレージへ移行してください。
 
