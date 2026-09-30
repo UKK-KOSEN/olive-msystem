@@ -4,9 +4,15 @@ cd /d "%~dp0"
 
 rem ================================================================
 rem  olive-msystem - all-in-one launcher
-rem  Sets up the environment (venv / node_modules / frontend build),
-rem  verifies the detection engine (olive-p + upscaler + ffmpeg) and
-rem  starts the backend/frontend watchdog processes.
+rem  Bootstraps everything a fresh checkout needs and starts the
+rem  backend/frontend watchdog processes:
+rem    - Python venv       (backend\.venv, auto-created)
+rem    - backend deps      (pip install -r backend\requirements.txt, idempotent)
+rem    - olive-p engine    (cloned to external\olive-p on first run unless
+rem                         OLIVE_P_DIR/env or an existing checkout is found)
+rem    - frontend deps     (npm install when node_modules is missing)
+rem    - frontend build    (npm run build when .next\BUILD_ID is missing)
+rem    - detection engine  (olive-p / upscaler / ffmpeg health check)
 rem
 rem  Usage:
 rem    start.bat                full setup + watchdogs (recommended)
@@ -20,6 +26,7 @@ if not defined BACKEND_HOST set BACKEND_HOST=127.0.0.1
 if not defined FRONTEND_PORT set FRONTEND_PORT=3001
 if not defined BACKEND_URL set BACKEND_URL=http://127.0.0.1:%BACKEND_PORT%
 set VENV_PY=backend\.venv\Scripts\python.exe
+set EXTERNAL_OLIVE_P=external\olive-p
 
 echo ================================================================
 echo   olive-msystem launcher (watchdog + detection engine)
@@ -29,17 +36,40 @@ echo   Duplicate-start guard + auto-restart enabled
 echo ================================================================
 echo.
 
-rem ---- 1. Python venv (create + install when missing) ----
+rem ---- 0. detection engine (olive-p) source ----
+rem    Prefer an explicit OLIVE_P_DIR; otherwise use an existing checkout
+rem    (bundled external\olive-p or the legacy well-known path). Only when
+rem    nothing exists do we clone from GitHub so a fresh machine boots fully
+rem    self-contained.
+if defined OLIVE_P_DIR (
+  echo [OK]   OLIVE_P_DIR set: %OLIVE_P_DIR%
+) else if exist "%EXTERNAL_OLIVE_P%\src\runtime.py" (
+  echo [OK]   Detection engine found: %EXTERNAL_OLIVE_P%
+) else if exist "%USERPROFILE%\Downloads\olive-p\src\runtime.py" (
+  echo [OK]   Detection engine found ^(existing checkout^): %USERPROFILE%\Downloads\olive-p
+) else (
+  echo [SETUP] olive-p not found under external\olive-p. Fetching detection engine...
+  git --version >nul 2>&1
+  if errorlevel 1 goto :err_git
+  if not exist "external" mkdir external
+  echo [SETUP] git clone https://github.com/UKK-KOSEN/olive-vision-ai.git ^(olive-p^) ...
+  git clone --depth 1 https://github.com/UKK-KOSEN/olive-vision-ai.git "%EXTERNAL_OLIVE_P%"
+  if errorlevel 1 goto :err_olivep
+  echo [OK]   Detection engine cloned: %EXTERNAL_OLIVE_P%
+)
+
+rem ---- 1. Python venv (create when missing) + backend deps ----
 if not exist "%VENV_PY%" (
   echo [SETUP] Creating Python venv...
   py -m venv backend\.venv
   if errorlevel 1 goto :err_venv
-  echo [SETUP] Installing backend requirements for the first time...
-  "%VENV_PY%" -m pip install -r backend\requirements.txt
-  if errorlevel 1 goto :err_venv
 ) else (
   echo [OK]   Python venv found: %VENV_PY%
 )
+echo [SETUP] Ensuring backend Python deps are up to date...
+"%VENV_PY%" -m pip install --disable-pip-version-check -r backend\requirements.txt
+if errorlevel 1 goto :err_venv
+echo [OK]   Backend deps ready.
 
 rem ---- 2. frontend node_modules (install when missing) ----
 if not exist "frontend\node_modules" (
@@ -100,6 +130,21 @@ exit /b 0
 echo.
 echo [ERROR] Failed to create/install the Python venv.
 echo         Fix the error above and re-run start.bat.
+pause
+exit /b 1
+
+:err_git
+echo.
+echo [ERROR] git was not found, but it is required to fetch the olive-p
+echo         detection engine. Install Git for Windows (https://git-scm.com)
+echo         and re-run start.bat, or set OLIVE_P_DIR to an existing olive-p.
+pause
+exit /b 1
+
+:err_olivep
+echo.
+echo [ERROR] Failed to clone the olive-p detection engine into external\olive-p.
+echo         Check your network/credentials, or set OLIVE_P_DIR to an existing olive-p.
 pause
 exit /b 1
 

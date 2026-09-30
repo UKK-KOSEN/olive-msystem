@@ -47,8 +47,8 @@ FastAPI (backend, ポート 8000)
 
 | テーブル | 説明 |
 |----------|------|
-| `users` | ユーザー（role: farmer/admin、farm_name 等）。パスワードは PBKDF2-HMAC-SHA256 のソルト付きハッシュで保存 |
-| `sessions` | セッショントークン（不透明なBearerトークン・有効30日・1ユーザー1セッション） |
+| `users` | ユーザー（role: farmer/admin、farm_name 等）。パスワードは Argon2id（PHC形式、`argon2-cffi`）でハッシュ保存。Argon2 未導入環境では PBKDF2-HMAC-SHA256（20万反復・塩付き）へフォールバックし、既存 `pbkdf2$...` ハッシュも検証可能 |
+| `sessions` | セッショントークン（不透明なBearerトークン・有効30日・1ユーザー1セッション）。保存時は SHA-256 でハッシュ化（旧セッションは生トークン照合でフォールバック） |
 | `videos` / `images` | アップロード資産（メタ情報、storage_path は相対パス） |
 | `observations` | 解析結果（時刻・ラベル・スコア・結果JSON・注釈画像パス） |
 | `trees` | 農園マップ用の樹木台帳（user_id + tree_id で一意、畝/列/品種） |
@@ -67,10 +67,17 @@ DB は WAL モードで運用しており、稼働中のバックアップ（`op
 - **不透明なBearerトークン**（`Authorization: Bearer <token>`）。JWTではありません。
   トークンは `POST /api/auth/login`（または `POST /api/auth/register`）のレスポンスの
   `token` フィールドで取得します。トークン本体は `secrets.token_urlsafe(32)` で生成される
-  ランダム文字列で、`sessions` テーブルに保存されます。
+  ランダム文字列で、`sessions` テーブルには **SHA-256 ハッシュ**にして保存されます（DB漏えい時に
+  トークンがそのまま使われないための対策。更新前からある従来セッションは生トークン照合で有効）。
 - トークンの有効期限は30日。ログインするたびにそのユーザーの**既存セッションを削除**して
   新しく発行するため、1ユーザーにつき常に1つの有効なセッションです。
   明示的に `POST /api/auth/logout` でも削除できます（ヘッダーに `Authorization` 不要）。
+- **ログイン試行の制限**: IP＋ユーザー名単位の `_RateGuard`（in-memory・threadsafe）で、
+  15分間に5回失敗すると15分間ロックし `429 AUTH_LOCKED` を返します。存在しないユーザー名でも
+  ダミーハッシュ検証で応答を時間的に対称化します。新規登録はIP単位で1時間8回まで
+  （`429 LIMIT_REGISTRATION`）。
+- **パスワード変更時のセッション破棄**: 自分のパスワード変更は他のセッションを破棄（現行維持）、
+  admin による農家パスワードリセットはその農家の全セッションを破棄します。
 - ロール:
   - **farmer**: 原則自分のデータのみ取得・編集。通知の `target_user_id` や樹木APIの `farmer_id` など、管理者向けスコープ指定は権限制約に従います。
   - **admin**: `/api/admin/*` と `/admin` ページへアクセス可能。

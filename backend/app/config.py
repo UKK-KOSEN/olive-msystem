@@ -114,10 +114,27 @@ def save_settings(settings: dict) -> dict:
     return current
 
 # Path to the original olive-p project that owns the analysis algorithm.
-OLIVE_P_DIR = Path(os.environ.get(
-    "OLIVE_P_DIR",
-    r"C:\Users\yakit\Downloads\olive-p",
-))
+# Resolution order:
+#   1. OLIVE_P_DIR environment variable (explicit override, first-class).
+#   2. The bundled <repo>/external/olive-p checkout that start.bat clones
+#      from https://github.com/UKK-KOSEN/olive-vision-ai.git on first boot.
+#   3. The legacy well-known checkout kept by older machines, so an existing
+#      local clone is not silently abandoned by the new default.
+#   4. <repo>/external/olive-p again (it does not exist yet -> start.bat will
+#      clone it; check_env reports a FAIL until then).
+def _olive_p_dir() -> Path:
+    env = os.environ.get("OLIVE_P_DIR")
+    if env:
+        return Path(env)
+    external = ROOT.parent / "external" / "olive-p"
+    legacy = Path(r"C:\Users\yakit\Downloads\olive-p")
+    for candidate in (external, legacy):
+        if candidate.joinpath("src", "runtime.py").is_file():
+            return candidate
+    return external
+
+
+OLIVE_P_DIR = _olive_p_dir()
 
 # --- runtime ---
 HOST = os.environ.get("HOST", "127.0.0.1")

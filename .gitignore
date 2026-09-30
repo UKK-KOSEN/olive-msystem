@@ -21,6 +21,7 @@ backend/*.log*
 # Runtime / ops artifacts
 logs/
 backups/
+external/
 
 # OS
 Thumbs.db

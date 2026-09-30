@@ -11,7 +11,14 @@
 | `run_backend.bat` | `uvicorn app.main:app`（ログは `logs/backend-uvicorn.log`） |
 | `run_frontend.bat` | `next start`（ログは `logs/frontend.log`） |
 
-初回の手動構築:
+初回起動時は以下をすべて自動で行います（手動構築は不要です）:
+
+- Python 仮想環境の作成＋`requirements.txt` のインストール/更新（常に idempotent に実行）
+- `frontend\node_modules` が無ければ `npm install`、`.next` が無ければ `npm run build`
+- **検出エンジン (olive-p) の自動解決**: `OLIVE_P_DIR` → `external\olive-p` → 従来の `Downloads\olive-p` の順に検出し、どれも無ければ `git clone https://github.com/UKK-KOSEN/olive-vision-ai.git external\olive-p` で取得（git 未導入時は明確なエラーで停止）
+- `ops\check_env.py` による環境チェック（olive-p / upscaler / ffmpeg）
+
+手動で行う場合は以下と同等です:
 
 ```powershell
 cd backend

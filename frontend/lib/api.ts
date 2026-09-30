@@ -519,6 +519,19 @@ function extractErrorCode(j: any): string | null {
 
 async function handle(res: Response) {
   if (res.status === 401) {
+    // A credential rejection (login / expired-token) carries a specific code
+    // and message; surface it (e.g. "ユーザー名またはパスワードが正しくありません")
+    // instead of the generic session-expired text used for plain timeouts.
+    let j: any = null;
+    try {
+      j = await res.json();
+    } catch {
+      // non-JSON body -> fall through to the generic UnauthorizedError
+    }
+    const code = extractErrorCode(j);
+    if (code && j && typeof j.detail === 'string') {
+      throw new ApiError(j.detail, 401, false, code);
+    }
     throw new UnauthorizedError();
   }
   if (!res.ok) {

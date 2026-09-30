@@ -12,7 +12,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Body, FastAPI, File, UploadFile, HTTPException, Query, Depends, Form, Header
+from fastapi import (Body, Depends, FastAPI, File, Form, Header, HTTPException,
+                     Query, Request, UploadFile)
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -36,7 +37,7 @@ from .models import (AnalyseImageRequest, AnalyseTimesRequest,
                      PasswordResetRequest, TreeCreate, TreeUpdate)
 from .runner import Runner
 from .soil_moisture import build_soil_data, integrate as integrate_soil, parse_observed_at_iso
-from .storage import Store, verify_password
+from .storage import Store, get_dummy_password_hash, hash_password, verify_password
 
 ensure_dirs()
 _LOGS_DIR = ROOT / "logs"
@@ -495,9 +496,63 @@ def api_versions():
 # --------------------------------------------------------------------------
 # Auth & registration
 # --------------------------------------------------------------------------
+class _RateGuard:
+    """In-memory failed-attempt throttle (per key, sliding window + lockout).
+
+    ``record_failure`` pushes the current time onto a key's window; once the
+    number of failures inside the window reaches ``max_fails`` the key is
+    locked for ``lock_secs``. Login uses key ``"login|<ip>|<username>``,
+    registration uses ``"reg|<ip>"``. State lives in this process only, which
+    is sufficient for the single-node architecture (the active instance
+    handles all writes; the standby disallows POSTs entirely).
+    """
+
+    def __init__(self, window: float = 900, max_fails: int = 5,
+                 lock_secs: float = 900):
+        self._window = window
+        self._max_fails = max_fails
+        self._lock_secs = lock_secs
+        self._mu = threading.Lock()
+        self._fails: dict[str, list[float]] = {}
+        self._locked_until: dict[str, float] = {}
+
+    def lock_remaining(self, key: str) -> int:
+        with self._mu:
+            until = self._locked_until.get(key, 0.0)
+            return max(0, int(until - time.time()))
+
+    def record_failure(self, key: str) -> None:
+        with self._mu:
+            now = time.time()
+            recent = [t for t in self._fails.get(key, []) if t > now - self._window]
+            recent.append(now)
+            self._fails[key] = recent
+            if len(recent) >= self._max_fails:
+                self._locked_until[key] = now + self._lock_secs
+                self._fails.pop(key, None)
+
+    def record_success(self, key: str) -> None:
+        with self._mu:
+            self._fails.pop(key, None)
+            self._locked_until.pop(key, None)
+
+
+_login_guard = _RateGuard()
+_registration_guard = _RateGuard(window=3600, max_fails=8, lock_secs=3600)
+
+
+def _client_ip(request: Request) -> str:
+    return (request.client.host if request.client else "?")
+
+
 @app.post("/api/auth/register")
-def register(req: RegisterRequest):
+def register(req: RegisterRequest, request: Request):
     """Self-registration for farmers. Creates a farmer account."""
+    reg_key = f"reg|{_client_ip(request)}"
+    if _registration_guard.lock_remaining(reg_key):
+        raise app_error(429, "LIMIT_REGISTRATION",
+                        "登録が一時的に制限されています。しばらくしてから再試行してください")
+    _registration_guard.record_failure(reg_key)
     username = req.username.strip()
     user = store.create_user(
         username,
@@ -513,12 +568,32 @@ def register(req: RegisterRequest):
 
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest):
-    user = store.get_user_by_username(req.username.strip())
-    if user is None or not verify_password(req.password, user["password_hash"]):
+def login(req: LoginRequest, request: Request):
+    username = req.username.strip()
+    key = f"login|{_client_ip(request)}|{username}"
+    locked_for = _login_guard.lock_remaining(key)
+    if locked_for:
+        raise app_error(429, "AUTH_LOCKED",
+                        f"連続失敗のためログインが一時的にロックされています（残り 約 {locked_for} 秒）")
+    user = store.get_user_by_username(username)
+    # Timing-equalized: an unknown username still runs one real hash
+    # verification, so response latency does not reveal that a user exists.
+    stored = user["password_hash"] if user else get_dummy_password_hash()
+    ok = verify_password(req.password, stored)
+    if not ok or user is None:
+        _login_guard.record_failure(key)
+        logger.warning("auth: failed login attempt user=%r ip=%s", username, _client_ip(request))
         raise app_error(401, "AUTH_BAD_CREDENTIALS", "ユーザー名またはパスワードが正しくありません")
     if not user.get("is_active"):
         raise app_error(403, "AUTH_ACCOUNT_DISABLED", "このアカウントは無効です")
+    _login_guard.record_success(key)
+    # 旧方式(PBKDF2)のハッシュは、ログイン成功時に Argon2id へ逐次移行
+    if not user["password_hash"].startswith("$argon2id$"):
+        try:
+            store.set_password_hash(user["id"], hash_password(req.password))
+        except Exception:  # 移行失敗してもログインは継続
+            logger.warning("password hash migration failed for user %s", user["username"], exc_info=True)
+    logger.info("login ok: user=%s ip=%s", user["username"], _client_ip(request))
     token = store.create_session(user["id"])
     public_user = {k: user.get(k) for k in (
         "id", "username", "role", "display_name", "farm_name",
@@ -543,8 +618,12 @@ def me(user: dict = Depends(get_current_user)):
 
 
 @app.put("/api/auth/profile")
-def update_profile(req: dict, user: dict = Depends(get_current_user)):
+def update_profile(req: dict, user: dict = Depends(get_current_user),
+                   authorization: str = Header(default="")):
     """Update the current user's profile (account, farm info, password, preferences)."""
+    current_token = ""
+    if authorization.lower().startswith("bearer "):
+        current_token = authorization[7:].strip()
     fields = {}
     if "display_name" in req:
         fields["display_name"] = str(req["display_name"]).strip() or None
@@ -570,6 +649,10 @@ def update_profile(req: dict, user: dict = Depends(get_current_user)):
         if len(str(req["password"])) < 6:
             raise app_error(400, "VALIDATION_PASSWORD", "password must be at least 6 characters")
         store.set_user_password(user["id"], str(req["password"]))
+        # Invalidate any other active session of this account (e.g. an old
+        # device), while keeping the session that made the change logged in.
+        if current_token:
+            store.delete_other_sessions(user["id"], current_token)
     # Handle preferences
     if "preferences" in req and isinstance(req["preferences"], dict):
         store.update_preferences(user["id"], req["preferences"])
@@ -2036,6 +2119,9 @@ def admin_reset_farmer_password(user_id: int, req: PasswordResetRequest,
     if user is None or user["role"] != "farmer":
         raise app_error(404, "NOT_FOUND_FARMER", "農家が見つかりません")
     store.set_user_password(user_id, req.new_password)
+    # The new password must force the farmer to log in again: kill every
+    # session the account still has.
+    store.revoke_all_sessions(user_id)
     return {"ok": True, "username": user["username"]}
 
 

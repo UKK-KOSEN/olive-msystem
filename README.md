@@ -83,7 +83,7 @@ olive-msystem/
 
 | 分類 | コード例 | 状態 |
 |------|---------|------|
-| 認証・認可 | `AUTH_REQUIRED` / `AUTH_BAD_CREDENTIALS` / `AUTH_FORBIDDEN` / `AUTH_USERNAME_TAKEN` / `AUTH_ACCOUNT_DISABLED` | 401 / 403 |
+| 認証・認可 | `AUTH_REQUIRED` / `AUTH_BAD_CREDENTIALS` / `AUTH_FORBIDDEN` / `AUTH_USERNAME_TAKEN` / `AUTH_ACCOUNT_DISABLED` / `AUTH_LOCKED`（試行超過で一時ロック） / `LIMIT_REGISTRATION`（登録回数超過） | 401 / 403 / 429 |
 | 入力検証 | `VALIDATION_PASSWORD` / `VALIDATION_FARM_TREES` / `VALIDATION_UNSUPPORTED_VIDEO` / `VALIDATION_NO_TIMES` / `VALIDATION_OBSERVATIONS_LIMIT` 等 | 400 / 422 |
 | 存在しない | `NOT_FOUND_VIDEO` / `NOT_FOUND_IMAGE` / `NOT_FOUND_OBSERVATION` / `NOT_FOUND_TREE` / `NOT_FOUND_FARMER` 等 | 404 |
 | 競合・状態 | `CONFLICT_VIDEO_ANALYZING`（解析中） / `CONFLICT_TREE_ID`（重複ID） | 409 |
@@ -106,7 +106,7 @@ olive-msystem/
 
 ## Getting Started（クイックスタート）
 
-1. **起動**: `start.bat` を実行するだけで、Python仮想環境・npmパッケージのインストール、フロントエンドのビルド（`.next` が無い場合）、検出エンジン（olive-p / upscaler / ffmpeg）の確認をすべて自動で行い、バックエンドとフロントエンドの watchdog を起動します。
+1. **起動**: `start.bat` を実行するだけで、Python仮想環境・npmパッケージのインストール/更新、フロントエンドのビルド（`.next` が無い場合）、検出エンジン（olive-p / upscaler / ffmpeg）の確認をすべて自動で行い、バックエンドとフロントエンドの watchdog を起動します。olive-p が見つからない場合は初回起動時に `external\olive-p` へ自動クローンします（`OLIVE_P_DIR` 指定がある場合はそれが最優先）。
 2. **アクセス**: ブラウザで http://localhost:3001 を開いてください。
 3. **ログイン**: 管理者は初回起動時にランダムな10桁数字パスワードで作成されます（ログ確認 or `ADMIN_PASSWORD` 環境変数で固定）。
 
@@ -153,7 +153,7 @@ ops\redundant-start.bat
 | `BACKEND_URL` | `http://127.0.0.1:8000` | Next.js の API プロキシ先（`next.config.mjs` rewrites） |
 | `MAX_UPLOAD_MB` | `2048` | アップロード1ファイルの容量上限（MB）。超過は `413 LIMIT_UPLOAD_TOO_LARGE` |
 | `WORKERS` | `2` | 解析キュー（runner）の並列ワーカー数 |
-| `OLIVE_P_DIR` | （環境依存） | olive-p 解析エンジンのパス（既定は `backend/app/config.py` 参照） |
+| `OLIVE_P_DIR` | （環境依存） | olive-p 解析エンジンのパス（未指定時は `external\olive-p` → 従来の `Downloads\olive-p` の順に自動検出、見つからなければ `start.bat` が `external\olive-p` へ自動クローン） |
 | `ADMIN_PASSWORD` | （ランダム10桁） | 管理者パスワードの固定（未設定時は初回起動時にランダム生成） |
 | `OLIVE_INSTANCE_ID` | `standalone` | 冗長構成でのプロセス識別子（`primary` / `standby` 等） |
 | `OLIVE_INSTANCE_ROLE` | `active` | 冗長構成でのロール（`active` / `standby`） |
@@ -277,7 +277,16 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
   ログイン時に発行される**不透明なセッショントークン**（`sessions` テーブルに保存、有効期限30日）です。
   トークンは `POST /api/auth/login`（または `POST /api/auth/register`）のレスポンス `token` で取得。
   ログインのたびに既存セッションが置き換わり、1ユーザーにつき1つの有効なセッションになります。
-  明示的なログアウトは `POST /api/auth/logout`。パスワードは保存せず PBKDF2-HMAC-SHA256 の塩付きハッシュで保管します。
+  明示的なログアウトは `POST /api/auth/logout`。
+- **パスワード保管**: 平文では保存せず、**Argon2id**（PHC形式、`argon2-cffi`）でハッシュ化します。
+  Argon2 が使えない環境では PBKDF2-HMAC-SHA256（20万反復・塩付き）へフォールバックし、既存の `pbkdf2$...` ハッシュもそのまま検証できます。
+- **セッショントークンは SHA-256 でハッシュしてからDBに保存**します（DB漏えい時にトークンがそのまま使われないよう対策）。
+  更新前からある従来のセッションも、生トークン照合のフォールバックにより引き続き有効です。
+- **ログイン試行の制限**: アカウントごと（IP＋ユーザー名単位）に15分間で5回失敗すると15分間ロックされ `429 AUTH_LOCKED` を返します。
+  存在しないユーザー名でもダミーハッシュ検証で応答時間を均等化し、ユーザー名の存在を推測されにくくしています。
+  新規登録はIP単位で1時間8回まで（超過時 `429 LIMIT_REGISTRATION`）。
+- **セッションの無効化**: 自分のパスワード変更時は他のセッションをすべて破棄（現在のセッションは維持）、
+  管理者による農家のパスワードリセット時はその農家の全セッションを破棄します。
 - ロールは **farmer**（農家）と **admin**（管理者）。
   - 農家は自分のデータのみ閲覧・編集可能。
   - 管理者のみ `/admin` と `/api/admin/*` にアクセス可能。それ以外のロールが `/admin` を開いた場合は `/forbidden`（403ページ）へ誘導。

@@ -26,6 +26,7 @@ ERROR_CODES: Dict[str, str] = {
     "AUTH_ACCOUNT_DISABLED": "AUTH_ACCOUNT_DISABLED",
     "AUTH_FORBIDDEN": "AUTH_FORBIDDEN",
     "AUTH_USERNAME_TAKEN": "AUTH_USERNAME_TAKEN",
+    "AUTH_LOCKED": "AUTH_LOCKED",
 
     # --- request validation (400/422) ---
     "VALIDATION_ERROR": "VALIDATION_ERROR",
@@ -58,6 +59,7 @@ ERROR_CODES: Dict[str, str] = {
     # --- resource limitations (413/429) ---
     "LIMIT_UPLOAD_TOO_LARGE": "LIMIT_UPLOAD_TOO_LARGE",
     "LIMIT_RATE": "LIMIT_RATE",
+    "LIMIT_REGISTRATION": "LIMIT_REGISTRATION",
 
     # --- server-side / availability (500/503) ---
     "SERVER_UPLOAD_WRITE": "SERVER_UPLOAD_WRITE",

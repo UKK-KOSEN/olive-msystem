@@ -85,22 +85,80 @@ def _rmtree_retry(path: Path, attempts: int = 3, delay: float = 0.3) -> None:
 
 _PBKDF2_ITER = 200_000
 
+# Optional argon2id support (used when argon2-cffi is installed; see
+# requirements.txt). The fallback keeps the app usable in a degraded venv.
+try:
+    from argon2 import PasswordHasher as _Argon2Hasher
+    from argon2.exceptions import InvalidHash as _Argon2InvalidHash
+    from argon2.exceptions import VerificationError as _Argon2VerifyError
+    from argon2.exceptions import VerifyMismatchError as _Argon2Mismatch
+    _ARGO2_AVAILABLE = True
+except ImportError:  # pragma: no cover - depends on the venv
+    _Argon2Hasher = None  # type: ignore[assignment]
+    _Argon2Mismatch = _Argon2VerifyError = _Argon2InvalidHash = Exception  # type: ignore[assignment]
+    _ARGO2_AVAILABLE = False
+
 
 def hash_password(password: str) -> str:
+    """Hash a password for storage (Argon2id when available, else PBKDF2).
+
+    The PHC string (``$argon2id$...``) is used when the argon2-cffi package is
+    installed; legacy "pbkdf2$..." hashes remain readable by verify_password so
+    existing users keep working across upgrades.
+    """
+    if _ARGO2_AVAILABLE:
+        return _Argon2Hasher().hash(password)
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), _PBKDF2_ITER)
     return f"pbkdf2${salt}${dk.hex()}"
 
 
 def verify_password(password: str, stored: str) -> bool:
+    if not isinstance(stored, str) or not stored:
+        return False
+    if stored.startswith("$argon2"):
+        # Fail closed: without the library an Argon2 hash can never verify.
+        if not _ARGO2_AVAILABLE:
+            return False
+        try:
+            return _Argon2Hasher().verify(stored, password)
+        except (_Argon2Mismatch, _Argon2VerifyError, _Argon2InvalidHash):
+            return False
     try:
         scheme, salt, digest = stored.split("$")
-    except (ValueError, AttributeError):
+        if scheme == "pbkdf2":
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"),
+                                     bytes.fromhex(salt), _PBKDF2_ITER)
+            return hmac.compare_digest(dk.hex(), digest)
+    except (ValueError, AttributeError, TypeError):
         return False
-    if scheme != "pbkdf2":
-        return False
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), _PBKDF2_ITER)
-    return hmac.compare_digest(dk.hex(), digest)
+    return False
+
+
+_dummy_hash_cache: str | None = None
+
+
+def get_dummy_password_hash() -> str:
+    """Return a real (unused) password hash for timing-equalized lookups.
+
+    When a login targets a user that does not exist, a hash for the (never
+    issued) password is verified anyway, so an attacker cannot learn whether a
+    username exists from the response latency alone.
+    """
+    global _dummy_hash_cache
+    if _dummy_hash_cache is None:
+        _dummy_hash_cache = hash_password(secrets.token_urlsafe(12))
+    return _dummy_hash_cache
+
+
+def hash_token(token: str) -> str:
+    """SHA-256 of a session token.
+
+    Only the digest is stored at rest, so a database leak does not expose
+    usable bearer tokens. Verification compares the digest of the presented
+    token against the stored row.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 class Store:
@@ -317,6 +375,18 @@ class Store:
             finally:
                 con.close()
 
+    def set_password_hash(self, user_id: int, password_hash: str) -> None:
+        with self._lock:
+            con = self._connect()
+            try:
+                con.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (password_hash, user_id),
+                )
+                con.commit()
+            finally:
+                con.close()
+
     def get_user(self, user_id: int) -> Optional[dict]:
         con = self._connect()
         try:
@@ -426,6 +496,7 @@ class Store:
 
     def create_session(self, user_id: int) -> str:
         token = secrets.token_urlsafe(32)
+        token_hash = hash_token(token)
         with self._lock:
             con = self._connect()
             try:
@@ -433,7 +504,7 @@ class Store:
                 con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
                 con.execute(
                     "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?,?,?,?)",
-                    (token, user_id, expires, _now()),
+                    (token_hash, user_id, expires, _now()),
                 )
                 con.commit()
                 return token
@@ -443,13 +514,17 @@ class Store:
     def get_user_by_token(self, token: str) -> Optional[dict]:
         if not token:
             return None
+        # New sessions store the SHA-256 digest; legacy rows store the raw
+        # token. Look up both so pre-upgrade sessions keep working until they
+        # naturally expire (and are then replaced by a hashed session).
+        token_hash = hash_token(token)
         con = self._connect()
         try:
             row = con.execute(
                 "SELECT u.id, u.username, u.role, u.display_name, u.farm_name, u.is_active, u.preferences "
                 "FROM sessions s JOIN users u ON u.id = s.user_id "
-                "WHERE s.token = ? AND s.expires_at > ?",
-                (token, datetime.now().astimezone().isoformat(timespec="seconds")),
+                "WHERE (s.token = ? OR s.token = ?) AND s.expires_at > ?",
+                (token_hash, token, datetime.now().astimezone().isoformat(timespec="seconds")),
             ).fetchone()
             if not row:
                 return None
@@ -472,7 +547,35 @@ class Store:
         with self._lock:
             con = self._connect()
             try:
-                con.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                con.execute("DELETE FROM sessions WHERE token IN (?, ?)",
+                            (hash_token(token), token))
+                con.commit()
+            finally:
+                con.close()
+
+    def delete_other_sessions(self, user_id: int, except_token: str) -> None:
+        """Revoke every session of a user except ``except_token``.
+
+        Used after a self-service password change: the account's other
+        sessions (if any) are invalidated while the current login stays alive.
+        """
+        with self._lock:
+            con = self._connect()
+            try:
+                con.execute(
+                    "DELETE FROM sessions WHERE user_id = ? AND token NOT IN (?, ?)",
+                    (user_id, hash_token(except_token), except_token),
+                )
+                con.commit()
+            finally:
+                con.close()
+
+    def revoke_all_sessions(self, user_id: int) -> None:
+        """Invalidate every session of a user (e.g. after an admin password reset)."""
+        with self._lock:
+            con = self._connect()
+            try:
+                con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
                 con.commit()
             finally:
                 con.close()

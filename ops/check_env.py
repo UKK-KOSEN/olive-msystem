@@ -100,7 +100,8 @@ def main() -> int:
         # analysis will raise a useful error at request time.
         fail.append("olive-p")
         report("detection engine (olive-p)", "fail",
-               f"'{OLIVE_P_DIR}' not found; set OLIVE_P_DIR or checkout olive-p")
+               f"'{OLIVE_P_DIR}' not found; run start.bat (clones olive-p to "
+               "external/olive-p) or set OLIVE_P_DIR")
 
     # ---- 4. upscale tooling (optional) ----
     upscale_dir = OLIVE_P_DIR / "tools" / "realesrgan-ncnn-vulkan"
