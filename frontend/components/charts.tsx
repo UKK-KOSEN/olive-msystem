@@ -94,12 +94,13 @@ const ZONES: { label: string; color: string; lo: number; hi: number }[] = [
 ];
 
 type Pt = { score: number; obs: Observation; t: number; x: number; y: number };
+type RenderPt = Pt & { n?: number };
 
 /**
  * Plain line chart of the health score over time. One point is plotted per
- * calendar day (the day's LATEST real observation); many observations in a
- * single day therefore collapse into a single dot instead of a tangled line.
- * No averaging, no smoothing - just straight segments between daily points.
+ * calendar day as the AVERAGE score of that day's observations, so many
+ * observations in a single day collapse into one clean dot. Straight line
+ * segments between daily points, no smoothing.
  */
 export function TrendChart({
   obs,
@@ -144,17 +145,26 @@ export function TrendChart({
     return pts.map((p) => ({ ...p, x: xFor(p.t), y: yFor(p.score) }));
   }, [pts, tMin, span, innerW, innerH, isEmpty]);
 
-  // one point per calendar day = that day's latest observation (ptsF is
-  // already sorted by time, so Map#set keeps the newest one per day)
-  const plotPts = useMemo<Pt[]>(() => {
+  // one point per calendar day = that day's AVERAGE score; the point is placed
+  // at that day's last observation time, and the tooltip uses it as reference
+  const plotPts = useMemo<RenderPt[]>(() => {
     if (ptsF.length === 0) return [];
-    const byDay = new Map<string, Pt>();
+    const byDay = new Map<string, Pt[]>();
     for (const p of ptsF) {
       const d = new Date(p.t);
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      byDay.set(key, p);
+      const list = byDay.get(key);
+      if (list) list.push(p);
+      else byDay.set(key, [p]);
     }
-    return [...byDay.values()];
+    const out: RenderPt[] = [];
+    for (const list of byDay.values()) {
+      const sum = list.reduce((s, p) => s + p.score, 0);
+      const avg = sum / list.length;
+      const rep = list[list.length - 1];
+      out.push({ score: avg, obs: rep.obs, t: rep.t, x: rep.x, y: yFor(avg), n: list.length });
+    }
+    return out;
   }, [ptsF]);
 
   // draw individual dots only while they stay readable; beyond that just the
@@ -227,7 +237,7 @@ export function TrendChart({
               {changeLabel}
             </p>
             <p className="mt-0.5 text-[11px] text-neutral-400">
-  観測 {ptsF.length}件{plotPts.length < ptsF.length ? `（1日1点・${plotPts.length}日分）` : ''}
+  観測 {ptsF.length}件{plotPts.length < ptsF.length ? `（1日平均・${plotPts.length}日分）` : ''}
 </p>
           </div>
         </div>
@@ -288,7 +298,7 @@ export function TrendChart({
           {showDots &&
             plotPts.map((p, i) => {
               const isLast = i === plotPts.length - 1;
-              const color = healthColor(p.obs.health_state?.label ?? '');
+              const color = healthColor(stateOfScore(p.score));
               return (
                 <g key={i}>
                   <title>
@@ -298,7 +308,8 @@ export function TrendChart({
                       day: 'numeric',
                     })}
                     {'\n'}
-                    {(p.score * 100).toFixed(1)}点（{healthJa(p.obs.health_state?.label ?? '')}）
+                    {(p.score * 100).toFixed(1)}点（{healthJa(stateOfScore(p.score))}）
+                    {p.n != null && p.n > 1 ? `\n${p.n} 件の平均` : ''}
                   </title>
                   <circle
                     cx={p.x}
@@ -342,25 +353,23 @@ export function TrendChart({
                 year: 'numeric',
                 month: 'numeric',
                 day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
               })}
             </div>
             <div className="mt-0.5 flex items-center gap-2">
               <span
                 className="text-sm font-bold tabular-nums"
-                style={{ color: healthColor(hover.obs.health_state?.label ?? '') }}
+                style={{ color: scoreColor(hover.score) }}
               >
                 {(hover.score * 100).toFixed(1)}点
               </span>
-              <StatePill
-                label={healthJa(hover.obs.health_state?.label ?? '')}
-                color={healthColor(hover.obs.health_state?.label ?? '')}
-              />
+              <StatePill label={scoreLabel(hover.score)} color={scoreColor(hover.score)} />
             </div>
             <div className="mt-1 truncate text-[11px] text-neutral-500">
               {hover.obs.filename || `観測 #${hover.obs.id}`}
             </div>
+            {hover.n != null && hover.n > 1 && (
+              <div className="mt-1 text-[10px] text-neutral-400">この日 {hover.n} 件の平均です</div>
+            )}
           </div>
         )}
       </div>
