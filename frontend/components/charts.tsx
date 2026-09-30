@@ -94,13 +94,10 @@ const ZONES: { label: string; color: string; lo: number; hi: number }[] = [
 ];
 
 type Pt = { score: number; obs: Observation; t: number; x: number; y: number };
-type RenderPt = Pt & { n?: number };
 
 /**
- * Simple health-score line chart. With few observations it draws a straight
- * polyline through every point; once the data gets dense (many observations)
- * it buckets the points into ~equal time slices, plots the AVERAGE score per
- * slice as a smooth curve so the trend stays readable instead of a noisy tangle.
+ * Plain line chart of the health score over time: every observation is a
+ * straight-line segment, no smoothing / averaging / fancy graphics.
  */
 export function TrendChart({
   obs,
@@ -145,54 +142,21 @@ export function TrendChart({
     return pts.map((p) => ({ ...p, x: xFor(p.t), y: yFor(p.score) }));
   }, [pts, tMin, span, innerW, innerH, isEmpty]);
 
-  // Dense data -> bucket into ~equal time slices and use the slice AVERAGE,
-  // so overlapping observations collapse into a smooth readable curve.
-  const MAX_RAW_POINTS = 60;
-  const renderPts = useMemo<RenderPt[]>(() => {
-    if (ptsF.length <= MAX_RAW_POINTS) return ptsF;
-    const buckets = Math.max(8, Math.min(MAX_RAW_POINTS, Math.round(innerW / 14)));
-    const seg = ptsF.length / buckets;
-    const out: RenderPt[] = [];
-    for (let i = 0; i < buckets; i++) {
-      const a = Math.floor(i * seg);
-      const b = Math.max(a + 1, Math.floor((i + 1) * seg));
-      const slice = ptsF.slice(a, b);
-      const x = slice.reduce((s, p) => s + p.x, 0) / slice.length;
-      const y = slice.reduce((s, p) => s + p.y, 0) / slice.length;
-      let rep = slice[0];
-      let bestD = Infinity;
-      for (const p of slice) {
-        const d = Math.abs(p.x - x);
-        if (d < bestD) {
-          bestD = d;
-          rep = p;
-        }
-      }
-      out.push({ score: y, obs: rep.obs, t: rep.t, x, y, n: slice.length });
-    }
-    // always end the line on the REAL latest observation (not a bucket mean)
-    out[out.length - 1] = ptsF[ptsF.length - 1];
-    return out;
-  }, [ptsF, innerW]);
-
-  const isAveraged = ptsF.length > MAX_RAW_POINTS;
-  const linePath =
-    renderPts.length > 1
-      ? isAveraged
-        ? smoothPath(renderPts)
-        : renderPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-      : '';
+  // draw individual dots only while they stay readable; beyond that just the
+  // plain line so dense data does not turn into a messy blob of circles
+  const showDots = ptsF.length <= 120;
+  const linePath = ptsF.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 
   const xTicks = useMemo<Pt[]>(() => {
-    if (renderPts.length === 0) return [];
+    if (ptsF.length === 0) return [];
     const maxN = Math.max(2, Math.min(4, Math.floor(innerW / 120)));
     const indices = Array.from({ length: maxN }, (_, i) =>
-      Math.round((i / (maxN - 1 || 1)) * (renderPts.length - 1)),
+      Math.round((i / (maxN - 1 || 1)) * (ptsF.length - 1)),
     );
     const unique = [...new Set(indices)];
-    if (unique[unique.length - 1] !== renderPts.length - 1) unique[unique.length - 1] = renderPts.length - 1;
-    return unique.map((index) => renderPts[index]);
-  }, [renderPts, innerW]);
+    if (unique[unique.length - 1] !== ptsF.length - 1) unique[unique.length - 1] = ptsF.length - 1;
+    return unique.map((index) => ptsF[index]);
+  }, [ptsF, innerW]);
 
   if (isEmpty) {
     return <p className="py-6 text-center text-sm text-neutral-400">スコアデータがありません。</p>;
@@ -203,11 +167,11 @@ export function TrendChart({
   const lastColor = healthColor(last.obs.health_state?.label ?? '');
   const change = last.score - first.score;
   const changeLabel = `${change >= 0 ? '+' : ''}${(change * 100).toFixed(1)}点`;
-  const hover = hoverIdx != null ? renderPts[hoverIdx] : null;
+  const hover = hoverIdx != null ? ptsF[hoverIdx] : null;
 
   const onMove = (e: React.MouseEvent) => {
     const svg = svgRef.current;
-    if (!svg || renderPts.length === 0) {
+    if (!svg || ptsF.length === 0) {
       setHoverIdx(null);
       return;
     }
@@ -216,8 +180,8 @@ export function TrendChart({
     const vx = (e.clientX - rect.left) * (width / rect.width);
     let best = 0;
     let bestD = Infinity;
-    for (let i = 0; i < renderPts.length; i++) {
-      const d = Math.abs(renderPts[i].x - vx);
+    for (let i = 0; i < ptsF.length; i++) {
+      const d = Math.abs(ptsF[i].x - vx);
       if (d < bestD) {
         bestD = d;
         best = i;
@@ -247,9 +211,7 @@ export function TrendChart({
             >
               {changeLabel}
             </p>
-            <p className="mt-0.5 text-[11px] text-neutral-400">
-  観測 {ptsF.length}件{isAveraged ? `（${renderPts.length}区間の平均を表示）` : ''}
-</p>
+            <p className="mt-0.5 text-[11px] text-neutral-400">観測 {ptsF.length}件</p>
           </div>
         </div>
       )}
@@ -302,44 +264,13 @@ export function TrendChart({
             );
           })}
 
-          {renderPts.length > 1 && linePath && (
-            <path
-              d={linePath}
-              fill="none"
-              stroke="#2b2b2b"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+          {ptsF.length > 1 && linePath && (
+            <path d={linePath} fill="none" stroke="#2b2b2b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           )}
 
-          {isAveraged ? (
-            <>
-              {renderPts[0] && (
-                <circle
-                  cx={renderPts[0].x}
-                  cy={renderPts[0].y}
-                  r={4}
-                  fill={healthColor(renderPts[0].obs.health_state?.label ?? '')}
-                  stroke="#fff"
-                  strokeWidth="1.5"
-                />
-              )}
-              <circle cx={last.x} cy={last.y} r={6} fill={lastColor} stroke="#fff" strokeWidth="2.5" />
-              {hoverIdx != null && renderPts[hoverIdx] && (
-                <circle
-                  cx={renderPts[hoverIdx].x}
-                  cy={renderPts[hoverIdx].y}
-                  r={7}
-                  fill="none"
-                  stroke="#2b2b2b"
-                  strokeWidth="1.5"
-                />
-              )}
-            </>
-          ) : (
-            renderPts.map((p, i) => {
-              const isLast = i === renderPts.length - 1;
+          {showDots &&
+            ptsF.map((p, i) => {
+              const isLast = i === ptsF.length - 1;
               const color = healthColor(p.obs.health_state?.label ?? '');
               return (
                 <g key={i}>
@@ -354,17 +285,31 @@ export function TrendChart({
                     {'\n'}
                     {(p.score * 100).toFixed(1)}点（{healthJa(p.obs.health_state?.label ?? '')}）
                   </title>
-                  {isLast ? (
-                    <>
-                      <circle cx={p.x} cy={p.y} r={hoverIdx === i ? 12 : 9} fill={color} opacity="0.18" />
-                      <circle cx={p.x} cy={p.y} r={6} fill={color} stroke="#fff" strokeWidth="2.5" />
-                    </>
-                  ) : (
-                    <circle cx={p.x} cy={p.y} r={hoverIdx === i ? 6 : 4} fill={color} stroke="#fff" strokeWidth="2" />
-                  )}
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r={isLast ? 5 : hoverIdx === i ? 5 : 3}
+                    fill={color}
+                    stroke="#fff"
+                    strokeWidth={isLast ? 2 : 1.5}
+                  />
                 </g>
               );
-            })
+            })}
+
+          {!showDots && ptsF.length > 0 && (
+            <circle cx={last.x} cy={last.y} r={5} fill={lastColor} stroke="#fff" strokeWidth="2" />
+          )}
+
+          {hover && (
+            <circle
+              cx={hover.x}
+              cy={hover.y}
+              r={8}
+              fill="none"
+              stroke="#2b2b2b"
+              strokeWidth="1.5"
+            />
           )}
         </svg>
 
@@ -401,9 +346,6 @@ export function TrendChart({
             <div className="mt-1 truncate text-[11px] text-neutral-500">
               {hover.obs.filename || `観測 #${hover.obs.id}`}
             </div>
-            {isAveraged && hover.n != null && hover.n > 1 && (
-              <div className="mt-1 text-[10px] text-neutral-400">この区間 {hover.n} 件の平均です</div>
-            )}
           </div>
         )}
       </div>
@@ -428,28 +370,4 @@ export function TrendChart({
 function parseDate(iso?: string | null): number {
   const d = iso ? new Date(iso) : new Date();
   return Number.isNaN(d.getTime()) ? Date.now() : d.getTime();
-}
-
-/** Catmull-Rom -> cubic bezier smoothing through the given points. */
-function smoothPath(points: RenderPt[]): string {
-  if (points.length === 0) return '';
-  if (points.length < 3) {
-    return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-  }
-  const parts: string[] = [];
-  points.forEach((p, i) => {
-    if (i === 0) {
-      parts.push(`M ${p.x} ${p.y}`);
-      return;
-    }
-    const p0 = points[Math.max(0, i - 1)];
-    const p2 = points[Math.min(points.length - 1, i + 1)];
-    const k = (p2.x - p0.x) / 6;
-    const cp1x = p.x - k;
-    const cp1y = p.y - (p2.y - p0.y) / 6;
-    const cp2x = p.x + k;
-    const cp2y = p.y + (p2.y - p0.y) / 6;
-    parts.push(`C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p.x} ${p.y}`);
-  });
-  return parts.join(' ');
 }
