@@ -96,8 +96,10 @@ const ZONES: { label: string; color: string; lo: number; hi: number }[] = [
 type Pt = { score: number; obs: Observation; t: number; x: number; y: number };
 
 /**
- * Plain line chart of the health score over time: every observation is a
- * straight-line segment, no smoothing / averaging / fancy graphics.
+ * Plain line chart of the health score over time. One point is plotted per
+ * calendar day (the day's LATEST real observation); many observations in a
+ * single day therefore collapse into a single dot instead of a tangled line.
+ * No averaging, no smoothing - just straight segments between daily points.
  */
 export function TrendChart({
   obs,
@@ -142,21 +144,34 @@ export function TrendChart({
     return pts.map((p) => ({ ...p, x: xFor(p.t), y: yFor(p.score) }));
   }, [pts, tMin, span, innerW, innerH, isEmpty]);
 
+  // one point per calendar day = that day's latest observation (ptsF is
+  // already sorted by time, so Map#set keeps the newest one per day)
+  const plotPts = useMemo<Pt[]>(() => {
+    if (ptsF.length === 0) return [];
+    const byDay = new Map<string, Pt>();
+    for (const p of ptsF) {
+      const d = new Date(p.t);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      byDay.set(key, p);
+    }
+    return [...byDay.values()];
+  }, [ptsF]);
+
   // draw individual dots only while they stay readable; beyond that just the
-  // plain line so dense data does not turn into a messy blob of circles
-  const showDots = ptsF.length <= 120;
-  const linePath = ptsF.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  // plain line so a long daily series does not turn into a blob of circles
+  const showDots = plotPts.length <= 120;
+  const linePath = plotPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 
   const xTicks = useMemo<Pt[]>(() => {
-    if (ptsF.length === 0) return [];
+    if (plotPts.length === 0) return [];
     const maxN = Math.max(2, Math.min(4, Math.floor(innerW / 120)));
     const indices = Array.from({ length: maxN }, (_, i) =>
-      Math.round((i / (maxN - 1 || 1)) * (ptsF.length - 1)),
+      Math.round((i / (maxN - 1 || 1)) * (plotPts.length - 1)),
     );
     const unique = [...new Set(indices)];
-    if (unique[unique.length - 1] !== ptsF.length - 1) unique[unique.length - 1] = ptsF.length - 1;
-    return unique.map((index) => ptsF[index]);
-  }, [ptsF, innerW]);
+    if (unique[unique.length - 1] !== plotPts.length - 1) unique[unique.length - 1] = plotPts.length - 1;
+    return unique.map((index) => plotPts[index]);
+  }, [plotPts, innerW]);
 
   if (isEmpty) {
     return <p className="py-6 text-center text-sm text-neutral-400">スコアデータがありません。</p>;
@@ -167,11 +182,11 @@ export function TrendChart({
   const lastColor = healthColor(last.obs.health_state?.label ?? '');
   const change = last.score - first.score;
   const changeLabel = `${change >= 0 ? '+' : ''}${(change * 100).toFixed(1)}点`;
-  const hover = hoverIdx != null ? ptsF[hoverIdx] : null;
+  const hover = hoverIdx != null ? plotPts[hoverIdx] : null;
 
   const onMove = (e: React.MouseEvent) => {
     const svg = svgRef.current;
-    if (!svg || ptsF.length === 0) {
+    if (!svg || plotPts.length === 0) {
       setHoverIdx(null);
       return;
     }
@@ -180,8 +195,8 @@ export function TrendChart({
     const vx = (e.clientX - rect.left) * (width / rect.width);
     let best = 0;
     let bestD = Infinity;
-    for (let i = 0; i < ptsF.length; i++) {
-      const d = Math.abs(ptsF[i].x - vx);
+    for (let i = 0; i < plotPts.length; i++) {
+      const d = Math.abs(plotPts[i].x - vx);
       if (d < bestD) {
         bestD = d;
         best = i;
@@ -211,7 +226,9 @@ export function TrendChart({
             >
               {changeLabel}
             </p>
-            <p className="mt-0.5 text-[11px] text-neutral-400">観測 {ptsF.length}件</p>
+            <p className="mt-0.5 text-[11px] text-neutral-400">
+  観測 {ptsF.length}件{plotPts.length < ptsF.length ? `（1日1点・${plotPts.length}日分）` : ''}
+</p>
           </div>
         </div>
       )}
@@ -264,13 +281,13 @@ export function TrendChart({
             );
           })}
 
-          {ptsF.length > 1 && linePath && (
+          {plotPts.length > 1 && linePath && (
             <path d={linePath} fill="none" stroke="#2b2b2b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           )}
 
           {showDots &&
-            ptsF.map((p, i) => {
-              const isLast = i === ptsF.length - 1;
+            plotPts.map((p, i) => {
+              const isLast = i === plotPts.length - 1;
               const color = healthColor(p.obs.health_state?.label ?? '');
               return (
                 <g key={i}>
@@ -279,8 +296,6 @@ export function TrendChart({
                       year: 'numeric',
                       month: 'numeric',
                       day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
                     })}
                     {'\n'}
                     {(p.score * 100).toFixed(1)}点（{healthJa(p.obs.health_state?.label ?? '')}）
@@ -297,7 +312,7 @@ export function TrendChart({
               );
             })}
 
-          {!showDots && ptsF.length > 0 && (
+          {!showDots && plotPts.length > 0 && (
             <circle cx={last.x} cy={last.y} r={5} fill={lastColor} stroke="#fff" strokeWidth="2" />
           )}
 
