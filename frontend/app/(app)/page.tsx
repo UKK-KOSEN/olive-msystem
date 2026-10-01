@@ -398,7 +398,7 @@ export default function Dashboard() {
         )}
         <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-5">
           <div
-            className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-neutral-50"
+            className="grid h-20 w-20 shrink-0 place-items-center rounded-xl bg-neutral-50"
             style={
               currentHealth || latestState
                 ? {
@@ -413,7 +413,7 @@ export default function Dashboard() {
             <img
               src={`/characters/${(currentHealth?.label ?? latestState?.label ?? 'good')}.png`}
               alt="オリーブ"
-              className="h-12 w-12 object-cover"
+              className="h-16 w-16 object-cover"
             />
           </div>
           <div className="min-w-0 flex-1 text-center sm:text-left">

@@ -456,6 +456,7 @@ Sidebar のナビゲーション（`frontend/components/Sidebar.tsx`）により
 | ドキュメント | 内容 |
 |--------------|------|
 | [docs/system-overview.md](docs/system-overview.md) | システム仕様書：仕組みの全体像・解析→判定→キャラクター・推移グラフ・実証手順（審査向け） |
+| [docs/review.md](docs/review.md) | 審査用資料：デモシナリオ・想定質問と回答・評価観点→実装対応マップ・非機能要件 |
 | [docs/architecture.md](docs/architecture.md) | システム構成・モジュール・DB・認証・通知・監視の全体像 |
 | [docs/api.md](docs/api.md) | APIエンドポイント一覧・形式 |
 | [docs/operations.md](docs/operations.md) | 起動・自動再起動・死活監視・バックアップ・ログ・トラブルシューティング |
