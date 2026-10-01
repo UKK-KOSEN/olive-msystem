@@ -2,6 +2,9 @@
 
 olive-msystem は **FastAPI (Python)** バックエンド + **Next.js 15 (App Router) / React 19** フロントエンドの2層構成です。
 
+> 「画像・動画から体調スコアがどう算出され、キャラクターやグラフでどう見える化されるか」という
+> **仕組みの全体像**は、先に [system-overview.md](system-overview.md)（システム仕様書）をご覧ください。
+
 ## 全体像
 
 ```
@@ -227,6 +230,7 @@ app/
 
 | UIルート | ドキュメント | 主なコードファイル | 説明 |
 |----------|-------------|-------------------|------|
+| 全体（仕組み） | [system-overview.md](system-overview.md) | `backend/app/health.py`, `backend/app/runner.py`, `backend/app/analyzer.py`, `frontend/components/charts.tsx` | 仕組みの全体像（解析→判定→キャラクター→推移グラフ） |
 | `/login` | （本README） | `frontend/app/login/page.tsx`, `frontend/lib/auth.tsx` | ログイン・農家登録 |
 | `/` | README（ダッシュボード） | `frontend/app/(app)/page.tsx` | ダッシュボード（アップロード/解析/プレビュー/土壌状態） |
 | `/olive` | README（体調確認） | `frontend/app/(app)/olive/page.tsx` | オリーブ体調キャラクター |

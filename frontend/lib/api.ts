@@ -134,7 +134,7 @@ export interface TreeRegistryData {
 export interface OliveStatus {
   states: Record<string, number>;
   total_observations: number;
-  labels: Record<string, { svg: string; ja: string; color: string }>;
+  labels: Record<string, { png: string; ja: string; color: string }>;
   latest: Observation | null;
   current_state: HealthState | null;
   current_video: string | null;

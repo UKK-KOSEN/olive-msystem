@@ -242,8 +242,8 @@ def health_state(rec: dict) -> dict:
 
 
 HEALTH_LABELS = {
-    "happy": {"svg": "happy.svg", "ja": "健康", "color": "#4ade80"},
-    "good": {"svg": "good.svg", "ja": "良好", "color": "#a3e635"},
-    "caution": {"svg": "caution.svg", "ja": "注意", "color": "#facc15"},
-    "danger": {"svg": "danger.svg", "ja": "要管理", "color": "#f87171"},
+    "happy": {"png": "happy.png", "ja": "健康", "color": "#4ade80"},
+    "good": {"png": "good.png", "ja": "良好", "color": "#a3e635"},
+    "caution": {"png": "caution.png", "ja": "注意", "color": "#facc15"},
+    "danger": {"png": "danger.png", "ja": "要管理", "color": "#f87171"},
 }

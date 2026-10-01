@@ -171,7 +171,7 @@ export default function OlivePage() {
           {total > 0 && (
             <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {STATE_ORDER.map((key) => {
-                const info = status.labels?.[key] ?? { ja: key, svg: '', color: '' };
+                const info = status.labels?.[key] ?? { ja: key, png: '', color: '' };
                 const count = states[key] || 0;
                 const pct = (count / total) * 100;
                 const color = healthColor(key);
@@ -215,11 +215,11 @@ function CharAvatar({ state, size }: { state: string; size: number }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={`/characters/${name}.svg`}
+      src={`/characters/${name}.png`}
       width={size}
       height={size}
       alt={`オリーブ（${healthJa(name)}）`}
-      className="shrink-0 rounded-2xl bg-neutral-50 ring-1 ring-neutral-100"
+      className="shrink-0 rounded-2xl bg-neutral-50 object-cover ring-1 ring-neutral-100"
     />
   );
 }

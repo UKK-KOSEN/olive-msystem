@@ -411,9 +411,9 @@ export default function Dashboard() {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`/characters/${(currentHealth?.label ?? latestState?.label ?? 'good')}.svg`}
+              src={`/characters/${(currentHealth?.label ?? latestState?.label ?? 'good')}.png`}
               alt="オリーブ"
-              className="h-12 w-12"
+              className="h-12 w-12 object-cover"
             />
           </div>
           <div className="min-w-0 flex-1 text-center sm:text-left">
