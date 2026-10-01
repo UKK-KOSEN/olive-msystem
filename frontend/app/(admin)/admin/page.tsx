@@ -56,7 +56,7 @@ export default function AdminPage() {
       api.adminOverview().catch(() => null),
       api.videos().catch(() => [] as Video[]),
       api.images().catch(() => [] as ImageAsset[]),
-      api.observations().catch(() => [] as Observation[]),
+      api.observations(undefined, undefined, { limit: 100000 }).catch(() => [] as Observation[]),
     ]);
     setStats(s);
     setOverview(ov);
@@ -220,7 +220,7 @@ function OverviewSection({ overview }: { overview: AdminOverview }) {
   return (
     <section className="card">
       <div className="mb-4">
-        <h2 className="label">統計（全農園・管理者別）</h2>
+        <h2 className="label">統計（全農家・管理者別）</h2>
         <p className="mt-1 text-xs text-neutral-400">
           管理者アカウントが解析したデータは農園の統計とは別に集計されます（農園に加算されません）。
         </p>
@@ -229,8 +229,8 @@ function OverviewSection({ overview }: { overview: AdminOverview }) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-neutral-100 p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-neutral-800">全農園の統計</h3>
-            <span className="badge bg-neutral-100 text-neutral-600">{f.users}農園</span>
+            <h3 className="text-sm font-semibold text-neutral-800">全農家の統計</h3>
+            <span className="badge bg-neutral-100 text-neutral-600">{f.users}農家</span>
           </div>
           <RoleStats role={f} />
         </div>
@@ -1086,18 +1086,23 @@ function DataSection({
   onChanged: () => void;
   flash: (m: { kind: 'ok' | 'err'; text: string }) => void;
 }) {
-const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
-  const [scope, setScope] = useState<'all' | 'farmers' | 'admin'>('all');
+  const [scope, setScope] = useState<'farmers' | 'farm' | 'admin'>('farmers');
+  const [farmId, setFarmId] = useState<number | null>(null);
+  const [farmers, setFarmers] = useState<FarmerRecord[]>([]);
+
+  useEffect(() => {
+    api.listFarmers().then(setFarmers).catch(() => setFarmers([]));
+  }, []);
 
   const isAdminOwned = (uid: number | null | undefined) => uid != null && adminUserIds.includes(uid);
-  const inScope = (uid: number | null | undefined) =>
-    scope === 'all'
-      ? true
-      : scope === 'admin'
-        ? isAdminOwned(uid)
-        : uid != null && !isAdminOwned(uid);
+  const inScope = (uid: number | null | undefined) => {
+    if (scope === 'admin') return isAdminOwned(uid);
+    if (scope === 'farm') return farmId != null && uid === farmId;
+    return !isAdminOwned(uid);
+  };
 
   const scopedVideos = videos.filter((v) => inScope(v.user_id ?? null));
   const scopedImages = images.filter((im) => inScope(im.user_id ?? null));
@@ -1164,14 +1169,19 @@ const [confirmClear, setConfirmClear] = useState(false);
           <div className="flex overflow-hidden rounded-lg border border-neutral-200 text-xs">
             {(
               [
-                ['all', '全データ'],
-                ['farmers', '農家のみ'],
-                ['admin', '管理者のみ'],
+                ['farmers', '全農家'],
+                ['farm', '農家別'],
+                ['admin', '管理者の解析結果'],
               ] as const
             ).map(([key, label]) => (
               <button
                 key={key}
-                onClick={() => setScope(key)}
+                onClick={() => {
+                  setScope(key);
+                  if (key === 'farm' && farmId == null && farmers.length) {
+                    setFarmId(farmers[0].id);
+                  }
+                }}
                 className={`px-2.5 py-1 transition-colors ${
                   scope === key
                     ? 'bg-neutral-800 text-white'
@@ -1182,6 +1192,20 @@ const [confirmClear, setConfirmClear] = useState(false);
               </button>
             ))}
           </div>
+          {scope === 'farm' && (
+            <select
+              value={farmId ?? ''}
+              onChange={(e) => setFarmId(e.target.value ? Number(e.target.value) : null)}
+              className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700"
+            >
+              <option value="">農家を選択…</option>
+              {farmers.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {farmerLabel(f)}（@{f.username}）
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         {confirmClear ? (
           <div className="flex items-center gap-2">
@@ -1198,11 +1222,11 @@ const [confirmClear, setConfirmClear] = useState(false);
         )}
       </div>
       <p className="mb-1 text-[11px] text-neutral-400">
-        {scope === 'all'
-          ? '全アカウントのデータを表示します（農家・管理者をまとめて確認できます）。'
-          : scope === 'admin'
-            ? '管理者アカウントがアップロード・解析したデータのみ表示します。'
-            : '農家アカウントのデータのみ表示します。'}
+        {scope === 'admin'
+          ? '管理者アカウントがアップロード・解析したデータ（管理者の解析結果）を表示します。'
+          : scope === 'farm'
+            ? '選択した農家のデータのみ表示します。'
+            : '全農家のデータをまとめて表示します（すべての農家の観測・動画・画像を確認できます）。'}
       </p>
 
       <h3 className="label mb-2 mt-4 text-sm">動画（{scopedVideos.length}）</h3>

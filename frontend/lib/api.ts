@@ -684,7 +684,7 @@ export const api = {
     if (upscale) body.upscale = true;
     return handle(await send(`/api/videos/${videoId}/analyse`, { method: 'POST', body }));
   },
-  async observations(videoId?: number, farmerId?: number, opts?: { from_date?: string; to_date?: string; source_type?: string; tree_id?: string }): Promise<Observation[]> {
+  async observations(videoId?: number, farmerId?: number, opts?: { from_date?: string; to_date?: string; source_type?: string; tree_id?: string; limit?: number }): Promise<Observation[]> {
     let url: string;
     if (videoId != null) {
       url = `/api/videos/${videoId}/observations`;
@@ -695,6 +695,7 @@ export const api = {
       if (opts?.to_date) q.set('to_date', opts.to_date);
       if (opts?.source_type) q.set('source_type', opts.source_type);
       if (opts?.tree_id) q.set('tree_id', opts.tree_id);
+      if (opts?.limit != null) q.set('limit', String(opts.limit));
       const qs = q.toString();
       url = `/api/observations${qs ? '?' + qs : ''}`;
     }
