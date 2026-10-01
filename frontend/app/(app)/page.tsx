@@ -335,10 +335,16 @@ export default function Dashboard() {
 
   // video status filter
   const [vFilter, setVFilter] = useState<'all' | Video['status']>('all');
-  const shownVideos = useMemo(
-    () => (vFilter === 'all' ? videos : videos.filter((v) => v.status === vFilter)),
-    [videos, vFilter]
-  );
+  // Admin also filters the observation list by owner. Reuses the dashboard scope
+  // ('all' / 'admin' / farmer id) so the list and the hero/trend never disagree.
+  const shownVideos = useMemo(() => {
+    let list = videos;
+    if (isAdmin) {
+      if (farmerId === 'admin') list = list.filter((v) => v.user_id === user?.id);
+      else if (typeof farmerId === 'number') list = list.filter((v) => v.user_id === farmerId);
+    }
+    return vFilter === 'all' ? list : list.filter((v) => v.status === vFilter);
+  }, [videos, vFilter, isAdmin, farmerId, user?.id]);
 
   const videoStatusOrder: { key: 'all' | Video['status']; label: string }[] = [
     { key: 'all', label: 'すべて' },
@@ -751,22 +757,52 @@ export default function Dashboard() {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h2 className="label">アップロード済みの動画</h2>
-            <span className="badge bg-neutral-100 text-neutral-600">{videos.length}</span>
+            <span className="badge bg-neutral-100 text-neutral-600">
+              {isAdmin ? shownVideos.length : videos.length}
+            </span>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {videoStatusOrder.map((f) => (
-              <button
-                key={f.key}
-                onClick={() => setVFilter(f.key)}
-                className={`badge transition-colors ${
-                  vFilter === f.key
-                    ? 'bg-neutral-900 text-white'
-                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-3">
+            {isAdmin && (
+              <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+                <span className="whitespace-nowrap">所有者で絞り込み</span>
+                <select
+                  value={
+                    farmerId === 'admin' ? 'admin' : typeof farmerId === 'number' ? String(farmerId) : 'all'
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === 'all') setFarmerId('all');
+                    else if (v === 'admin') setFarmerId('admin');
+                    else setFarmerId(Number(v));
+                  }}
+                  aria-label="所有者で絞り込み"
+                  className="rounded-lg border border-neutral-300 bg-white px-2 py-1 text-xs focus:border-olive-500 focus:outline-none"
+                >
+                  <option value="all">すべての所有者</option>
+                  <option value="admin">管理者（自分）</option>
+                  {farmers.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.farm_name || f.display_name || f.username}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {videoStatusOrder.map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => setVFilter(f.key)}
+                  className={`badge transition-colors ${
+                    vFilter === f.key
+                      ? 'bg-neutral-900 text-white'
+                      : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -774,6 +810,8 @@ export default function Dashboard() {
           <div className="card text-center text-sm text-neutral-400">
             {videos.length === 0
               ? 'まだ動画がありません。上の領域から動画を追加してください。'
+              : isAdmin
+              ? 'この範囲・状態に該当する動画はありません。'
               : `「${videoStatusOrder.find((f) => f.key === vFilter)?.label}」の動画はありません。`}
           </div>
         ) : (
@@ -829,6 +867,18 @@ export default function Dashboard() {
                       <span>{formatBytes(v.size_bytes)}</span>
                       {v.width && v.height && <span>{v.width}×{v.height}</span>}
                       {v.recorded_at && <span>撮影 {fmtMeasuredAt(v.recorded_at)}</span>}
+                      {isAdmin && (
+                        <span className="font-medium text-neutral-500">
+                          {v.user_id == null
+                            ? '未所属'
+                            : v.user_id === user?.id
+                            ? '管理者（自分）'
+                            : farmers.find((f) => f.id === v.user_id)?.farm_name ||
+                              farmers.find((f) => f.id === v.user_id)?.display_name ||
+                              farmers.find((f) => f.id === v.user_id)?.username ||
+                              `ユーザー ${v.user_id}`}
+                        </span>
+                      )}
                     </p>
                   </div>
 
