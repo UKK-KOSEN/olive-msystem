@@ -1268,10 +1268,11 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
     );
   }
 
-  // Group by timestamp_sec (+ tree_id). Up-scaled and non-upscaled passes of
-  // the same frame were stored as separate observations during the comparison
-  // era; merge them so each frame shows as a single row (preferring the
-  // up-scaled, higher-quality result when both exist).
+  // The very same frame is stored once per analysis run, so re-analysing a
+  // video (or analysing the same frame for another tree) leaves several
+  // observations that share one timestamp. Group by timestamp only: the 時間
+  // column must never repeat for one frame. Prefer the up-scaled result, then
+  // the newest run.
   interface RowGroup {
     key: string;
     primary: Observation;
@@ -1279,23 +1280,21 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
   }
 
   const groups: RowGroup[] = [];
-  const seen = new Set<string>();
+  const byTimestamp = new Map<string, RowGroup>();
   for (const o of obs) {
-    const tsKey = `${o.timestamp_sec}_${o.tree_id ?? ''}`;
-    if (seen.has(tsKey)) continue;
-    seen.add(tsKey);
-    const pair = obs.find(
-      (other) =>
-        other.id !== o.id &&
-        other.timestamp_sec === o.timestamp_sec &&
-        other.tree_id === o.tree_id &&
-        other.upscaled !== o.upscaled,
-    );
-    groups.push({
-      key: tsKey,
-      primary: pair ? (o.upscaled ? o : pair) : o,
-      timestamp_sec: o.timestamp_sec,
-    });
+    const key = String(o.timestamp_sec);
+    const cur = byTimestamp.get(key);
+    if (!cur) {
+      const g: RowGroup = { key, primary: o, timestamp_sec: o.timestamp_sec };
+      byTimestamp.set(key, g);
+      groups.push(g);
+      continue;
+    }
+    const prev = cur.primary;
+    const better =
+      (!!o.upscaled && !prev.upscaled) ||
+      (!!o.upscaled === !!prev.upscaled && o.id > prev.id);
+    if (better) cur.primary = o;
   }
 
   return (
