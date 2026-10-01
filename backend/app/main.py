@@ -1745,18 +1745,34 @@ def media_file(file_name: str):
 # --------------------------------------------------------------------------
 @app.get("/api/olive/status")
 def olive_status(user: dict = Depends(get_current_user),
-                 farmer_id: Optional[int] = Query(None)):
+                 farmer_id: Optional[int] = Query(None),
+                 all_farmers: bool = Query(False)):
     """Aggregate observations into a current state + per-state summaries.
 
     ``current_state`` is computed from the observations visible to the caller.
-    For an admin, ``farmer_id`` scopes the aggregation to a single farmer so
-    the dashboard hero matches the farmer-selected trend chart.
+    Scoping, for admins:
+      * ``farmer_id`` -> that single farm (or the admin's own account, so an
+        admin can review only the data they observed themselves).
+      * ``all_farmers`` -> every *farmer* merged into one aggregate. The admin's
+        own observations are excluded: the admin is not a farm, so mixing their
+        rows in would skew the combined view.
+      * neither -> all visible rows (previous behaviour).
     """
-    if user["role"] == "admin" and farmer_id is not None:
-        uid = farmer_id
+    is_admin = user["role"] == "admin"
+    farmers_only = is_admin and all_farmers and farmer_id is None
+
+    if farmers_only:
+        # Every farmer merged into one aggregate, admin's own rows excluded.
+        farmer_ids = {u["id"] for u in store.list_users() if u.get("role") == "farmer"}
+        obs = [
+            o for o in store.list_observations(limit=5000)
+            if o.get("user_id") in farmer_ids
+        ]
     else:
-        uid = _scope_id(user)
-    obs = store.list_observations(limit=500, user_id=uid)
+        # A named farmer (or the admin's own account) scopes to that user;
+        # otherwise an admin sees everything, a farmer only their own rows.
+        uid = farmer_id if (is_admin and farmer_id is not None) else _scope_id(user)
+        obs = store.list_observations(limit=5000, user_id=uid)
     latest = {}
     for o in obs:
         vid = o["video_id"]
@@ -1777,6 +1793,11 @@ def olive_status(user: dict = Depends(get_current_user),
         "latest": current,
         "labels": HEALTH_LABELS,
         "current_state": aggregate_health_state(obs),
+        "scope": (
+            "all_farmers" if farmers_only
+            else "user" if farmer_id is not None
+            else "all"
+        ),
     }
     if current:
         payload["current_video"] = current.get("filename")

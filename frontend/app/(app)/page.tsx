@@ -71,7 +71,11 @@ export default function Dashboard() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [allObs, setAllObs] = useState<Observation[]>([]);
   const [farmers, setFarmers] = useState<FarmerRecord[]>([]);
-  const [farmerId, setFarmerId] = useState<number | null>(null);
+  // Admin dashboard scope: which owner's observations the hero + trend show.
+  //  - 'all'    every farmer (and the admin's own rows) combined
+  //  - 'admin'  only the admin's own observations
+  //  - number   that single farmer
+  const [farmerId, setFarmerId] = useState<number | 'all' | 'admin' | null>(null);
   const [oliveStatus, setOliveStatus] = useState<OliveStatus | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -126,7 +130,6 @@ export default function Dashboard() {
   useEffect(() => {
     loadVideos();
     loadAllObs();
-    api.oliveStatus(isAdmin ? farmerId ?? undefined : undefined).then(setOliveStatus).catch(() => setOliveStatus(null));
     api.soilStatus().then(setSoilStatus).catch(() => setSoilStatus(null));
   }, [loadVideos, loadAllObs]);
 
@@ -138,37 +141,50 @@ export default function Dashboard() {
       .catch(() => {});
   }, [isAdmin]);
 
-  // Admin sees every farmer's data merged in one line otherwise;
-  // scope the dashboard to a farmer so the trend plots like a farmer account.
+  // Admin defaults to the combined "all farms" view; picking a farmer or the
+  // admin's own data is optional. Never silently switch away from a choice the
+  // admin already made, so this only seeds the very first value.
   useEffect(() => {
-    if (!isAdmin || farmerId != null) return;
-    const groups = new Map<number, { latest: number; count: number }>();
-    for (const o of allObs) {
-      if (o.user_id == null) continue;
-      const t = new Date(o.observed_at).getTime() || 0;
-      const g = groups.get(o.user_id) ?? { latest: 0, count: 0 };
-      g.count += 1;
-      if (t > g.latest) g.latest = t;
-      groups.set(o.user_id, g);
+    if (!isAdmin) return;
+    setFarmerId((cur) => (cur == null ? 'all' : cur));
+  }, [isAdmin]);
+
+  // Scope the dashboard to the selected owner. 'all' merges every farm into one
+  // aggregate (an overview, not a per-farm trend line); 'admin' shows only the
+  // admin's own observations; a number shows that single farm.
+  const scopedObs = useMemo(() => {
+    if (!isAdmin) return allObs;
+    if (farmerId == null) return [];
+    if (farmerId === 'all') return allObs;
+    if (farmerId === 'admin') return allObs.filter((o) => o.user_id === user?.id);
+    return allObs.filter((o) => o.user_id === farmerId);
+  }, [allObs, isAdmin, farmerId, user?.id]);
+
+  // Re-fetch the hero health so an admin-selected scope shows the matching
+  // aggregate (matches the scoped trend chart).
+  const refreshOliveStatus = useCallback(() => {
+    if (!isAdmin) {
+      api.oliveStatus(undefined).then(setOliveStatus).catch(() => setOliveStatus(null));
+      return;
     }
-    const ranked = [...groups.entries()].sort(
-      (a, b) => b[1].latest - a[1].latest || b[1].count - a[1].count
-    );
-    if (ranked.length > 0) setFarmerId(ranked[0][0]);
-  }, [allObs, isAdmin, farmerId]);
-
-  // Never merge farmers into one trend line for admins: no farmer selected -> no chart.
-  const scopedObs = useMemo(
-    () => (isAdmin ? (farmerId != null ? allObs.filter((o) => o.user_id === farmerId) : []) : allObs),
-    [allObs, isAdmin, farmerId]
-  );
-
-  // Re-fetch the hero health so an admin-selected farmer shows the same score
-  // as the farmer's own account (matches the scoped trend chart).
-  useEffect(() => {
-    if (!isAdmin || farmerId == null) return;
+    if (farmerId === 'admin') {
+      api.oliveStatus(user?.id).then(setOliveStatus).catch(() => setOliveStatus(null));
+      return;
+    }
+    if (farmerId === 'all') {
+      api.oliveStatus(undefined, { all_farmers: true }).then(setOliveStatus).catch(() => setOliveStatus(null));
+      return;
+    }
+    if (farmerId == null) {
+      setOliveStatus(null);
+      return;
+    }
     api.oliveStatus(farmerId).then(setOliveStatus).catch(() => setOliveStatus(null));
-  }, [isAdmin, farmerId]);
+  }, [isAdmin, farmerId, user?.id]);
+
+  useEffect(() => {
+    refreshOliveStatus();
+  }, [refreshOliveStatus]);
 
   // poll while processing
   useEffect(() => {
@@ -176,14 +192,14 @@ export default function Dashboard() {
       if (videos.some((v) => v.status === 'processing')) {
         loadVideos();
         loadAllObs();
-        api.oliveStatus(isAdmin ? farmerId ?? undefined : undefined).then(setOliveStatus).catch(() => setOliveStatus(null));
+        refreshOliveStatus();
         videos.forEach((v) => {
           if (v.status === 'done') loadObs(v.id);
         });
       }
     }, 3000);
     return () => clearInterval(t);
-  }, [videos, loadObs, loadVideos, loadAllObs]);
+  }, [videos, loadObs, loadVideos, loadAllObs, refreshOliveStatus]);
 
   const handleFiles = async (files: File[]) => {
     setUploading(true);
@@ -355,36 +371,66 @@ export default function Dashboard() {
 
       <ErrorNotice message={dataError} onRetry={() => { loadVideos(); loadAllObs(); }} />
 
-      {/* admin: pick which farmer's data to show (never merge all farmers into one trend) */}
+      {/* admin: choose whose observations the dashboard evaluates — all farms
+          combined, the admin's own observations, or a single farm. */}
       {isAdmin && (
-        <section className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-          <span className="text-sm font-medium text-neutral-700">表示する農家</span>
-          <select
-            value={farmerId ?? ''}
-            onChange={(e) => setFarmerId(e.target.value ? Number(e.target.value) : null)}
-            className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-olive-500 focus:outline-none"
-          >
-            <option value="" disabled>
-              表示する農家を選択
-            </option>
-            {farmers.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.farm_name || f.display_name || f.username}
-              </option>
-            ))}
-          </select>
-          {farmerId == null ? (
-            <p className="text-xs text-neutral-500">
-              農家を選ぶと、その農家の観測のみで推移グラフが表示されます。
-            </p>
-          ) : (
-            <p className="text-xs text-neutral-500">
-              {farmers.find((f) => f.id === farmerId)?.farm_name ||
+        <section className="mb-6 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-neutral-700">表示範囲</span>
+            <div className="inline-flex rounded-lg border border-neutral-300 bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => setFarmerId('all')}
+                className={`rounded-md px-3 py-1.5 text-sm transition ${
+                  farmerId === 'all'
+                    ? 'bg-olive-500 font-medium text-white'
+                    : 'text-neutral-600 hover:bg-neutral-50'
+                }`}
+              >
+                全農家
+              </button>
+              <button
+                type="button"
+                onClick={() => setFarmerId('admin')}
+                className={`rounded-md px-3 py-1.5 text-sm transition ${
+                  farmerId === 'admin'
+                    ? 'bg-olive-500 font-medium text-white'
+                    : 'text-neutral-600 hover:bg-neutral-50'
+                }`}
+              >
+                管理者（自分）
+              </button>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-neutral-600">
+              農家別
+              <select
+                value={typeof farmerId === 'number' ? farmerId : ''}
+                onChange={(e) =>
+                  e.target.value ? setFarmerId(Number(e.target.value)) : setFarmerId('all')
+                }
+                className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm focus:border-olive-500 focus:outline-none"
+              >
+                <option value="">選択してください</option>
+                {farmers.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.farm_name || f.display_name || f.username}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-neutral-500">
+            {farmerId === 'all' &&
+              '全農家の観測をまとめて集計しています。農家ごとの内訳は管理画面で個別に確認できます。'}
+            {farmerId === 'admin' &&
+              '管理者が自分で観測したデータのみを集計しています。'}
+            {typeof farmerId === 'number' &&
+              `${farmers.find((f) => f.id === farmerId)?.farm_name ||
                 farmers.find((f) => f.id === farmerId)?.display_name ||
-                '選択中の農家'}
-              の観測のみで表示しています（農家アカウントと同じ描き方です）。
-            </p>
-          )}
+                farmers.find((f) => f.id === farmerId)?.username ||
+                '選択中の農家'}の観測のみで表示しています（農家アカウントと同じ描き方です）。`}
+            {farmerId == null && '表示範囲を選択してください。'}
+          </p>
         </section>
       )}
 
@@ -607,7 +653,11 @@ export default function Dashboard() {
               <TrendChart obs={sortedObs} height={320} />
             ) : isAdmin && farmerId == null ? (
               <p className="py-8 text-center text-sm text-neutral-400">
-                上の「表示する農家」を選択すると、その農家の体調スコアの推移が表示されます。
+                上の「表示範囲」を選択すると、体調スコアの推移が表示されます。
+              </p>
+            ) : isAdmin ? (
+              <p className="py-8 text-center text-sm text-neutral-400">
+                この範囲にはまだ観測データがありません。
               </p>
             ) : (
               <p className="py-8 text-center text-sm text-neutral-400">

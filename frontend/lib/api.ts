@@ -140,6 +140,7 @@ export interface OliveStatus {
   current_state: HealthState | null;
   current_video: string | null;
   current_timestamp: number | null;
+  scope?: 'all' | 'all_farmers' | 'user';
 }
 
 export interface ImageAsset {
@@ -762,9 +763,12 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(objectUrl);
   },
-  async oliveStatus(farmerId?: number): Promise<OliveStatus> {
-    const q = farmerId != null ? `?farmer_id=${farmerId}` : '';
-    return handle(await get(`/api/olive/status${q}`));
+  async oliveStatus(farmerId?: number, opts?: { all_farmers?: boolean }): Promise<OliveStatus> {
+    const q = new URLSearchParams();
+    if (farmerId != null) q.set('farmer_id', String(farmerId));
+    if (opts?.all_farmers) q.set('all_farmers', '1');
+    const qs = q.toString();
+    return handle(await get(`/api/olive/status${qs ? `?${qs}` : ''}`));
   },
   async health(): Promise<any> {
     return handle(await get('/api/health'));
