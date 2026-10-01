@@ -1268,11 +1268,14 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
     );
   }
 
-  // The very same frame is stored once per analysis run, so re-analysing a
-  // video (or analysing the same frame for another tree) leaves several
-  // observations that share one timestamp. Group by timestamp only: the 時間
-  // column must never repeat for one frame. Prefer the up-scaled result, then
-  // the newest run.
+  // The very same frame can be stored more than once: re-analysing a video, or
+  // analysing one frame for several trees, leaves observations that share a
+  // timestamp. Rule for one readable row per frame:
+  //   - a detected tree_id is meaningful -> keep those frames apart (a frame
+  //     really was analysed for different trees),
+  //   - no tree_id at all -> there is nothing to tell apart, so fold every
+  //     observation at that timestamp into a single row.
+  // Within one group, prefer the up-scaled result, then the newest run.
   interface RowGroup {
     key: string;
     primary: Observation;
@@ -1280,13 +1283,17 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
   }
 
   const groups: RowGroup[] = [];
-  const byTimestamp = new Map<string, RowGroup>();
+  const byKey = new Map<string, RowGroup>();
   for (const o of obs) {
-    const key = String(o.timestamp_sec);
-    const cur = byTimestamp.get(key);
+    const ts = String(o.timestamp_sec);
+    const tree = (o.tree_id ?? '').trim();
+    // 'n' groups every tree-less observation of a timestamp together; 't' keeps
+    // identified trees separate, and can never collide with a 'n' key.
+    const key = tree ? `t:${ts}:${tree}` : `n:${ts}`;
+    const cur = byKey.get(key);
     if (!cur) {
       const g: RowGroup = { key, primary: o, timestamp_sec: o.timestamp_sec };
-      byTimestamp.set(key, g);
+      byKey.set(key, g);
       groups.push(g);
       continue;
     }
@@ -1305,6 +1312,7 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
           <thead>
             <tr className="text-left text-xs text-neutral-400">
               <th className="pb-2 pr-4 font-medium">時間</th>
+              <th className="pb-2 pr-4 font-medium">木</th>
               <th className="pb-2 pr-4 font-medium">葉数</th>
               <th className="pb-2 pr-4 font-medium">果実</th>
               <th className="pb-2 pr-4 font-medium">緑被率</th>
@@ -1323,6 +1331,15 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                 <tr className={isOpen ? 'border-t border-neutral-100 bg-neutral-50' : 'border-t border-neutral-100 hover:bg-neutral-50/60'}>
                     <td className="py-2.5 pr-4 font-medium tabular-nums text-neutral-700">
                       {formatTimestamp(o.timestamp_sec)}
+                    </td>
+                    <td className="py-2.5 pr-4">
+                      {o.tree_id ? (
+                        <span className="inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700">
+                          {o.tree_id}
+                        </span>
+                      ) : (
+                        <span className="text-neutral-300">—</span>
+                      )}
                     </td>
                     <td className="py-2.5 pr-4 tabular-nums">{o.leaf_count ?? '—'}</td>
                     <td className="py-2.5 pr-4 tabular-nums">{o.fruit_count ?? '—'}</td>
@@ -1357,7 +1374,7 @@ function ObservationTable({ obs, error }: { obs: Observation[]; error?: string }
                   </tr>
                   {isOpen && (
                     <tr className="border-t border-neutral-100 bg-neutral-50">
-                      <td colSpan={7} className="py-4">
+                      <td colSpan={8} className="py-4">
                         <ObservationDetail obs={o} />
                       </td>
                     </tr>
