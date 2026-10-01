@@ -54,16 +54,20 @@ function HealthGauge({ score }: { score: number }) {
 export default function OlivePage() {
   const [status, setStatus] = useState<OliveStatus | null>(null);
   const [observations, setObservations] = useState<Observation[]>([]);
+  const [media, setMedia] = useState<{ videos: number; images: number }>({ videos: 0, images: 0 });
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [s, obs] = await Promise.all([
+      const [s, obs, vids, imgs] = await Promise.all([
         api.oliveStatus(),
         api.observations().catch(() => []),
+        api.videos().catch(() => []),
+        api.images().catch(() => []),
       ]);
       setStatus(s);
       setObservations(obs);
+      setMedia({ videos: vids.length, images: imgs.length });
       setError(null);
     } catch (e: any) {
       setError(e?.message || 'バックエンドに接続できません。');
@@ -200,8 +204,8 @@ export default function OlivePage() {
           <section className="mt-8">
             <FarmerHome
               observations={observations}
-              videoCount={0}
-              imageCount={0}
+              videoCount={media.videos}
+              imageCount={media.images}
             />
           </section>
         </>

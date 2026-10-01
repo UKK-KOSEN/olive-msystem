@@ -60,11 +60,14 @@ export function FarmerHome({
         <h2 className="text-sm font-semibold text-neutral-500 mb-4">現在のステータス</h2>
         <div className="flex items-center gap-6">
           {latestState && (
-            <HealthGauge
-              score={latestState.score ?? 0}
-              size={120}
-              strokeWidth={9}
-            />
+            <div className="w-[124px] shrink-0">
+              <HealthGauge
+                score={latestState.score ?? 0}
+                size={120}
+                strokeWidth={9}
+                label="現在のスコア"
+              />
+            </div>
           )}
           <div className="flex-1">
             <div className="text-lg font-bold" style={{ color: healthColor(latestState?.label ?? '') }}>
