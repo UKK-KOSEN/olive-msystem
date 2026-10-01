@@ -97,7 +97,7 @@ export default function OlivePage() {
           <section className="card mb-6 overflow-hidden">
             {current ? (
               <div className="flex flex-col items-center gap-8 md:flex-row md:gap-12">
-                <CharAvatar state={current.label} size={240} />
+                <CharAvatar state={current.label} size={320} />
                 <div className="min-w-0 flex-1 text-center md:text-left">
                   <div className="flex items-center justify-center gap-2 md:justify-start">
                     <StatePill label={healthJa(current.label)} color={healthColor(current.label)} />
@@ -134,7 +134,7 @@ export default function OlivePage() {
               </div>
             ) : (
               <div className="flex flex-col items-center gap-6 py-10 text-center">
-                <CharAvatar state="good" size={180} />
+                <CharAvatar state="good" size={260} />
                 <p className="max-w-md text-sm text-neutral-500">
                   まだ解析データがありません。ダッシュボードから動画を解析すると、ここにオリーブの体調が表示されます。
                 </p>
@@ -177,7 +177,7 @@ export default function OlivePage() {
                 const color = healthColor(key);
                 return (
                   <div key={key} className="card flex items-center gap-4">
-                    <CharAvatar state={key} size={68} />
+                    <CharAvatar state={key} size={96} />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium" style={{ color }}>
                         {info.ja}
