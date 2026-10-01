@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { IconSettings } from '@/components/icons';
 
 const nav: { href: string; label: string; icon: React.ReactNode }[] = [
   {
@@ -45,9 +44,11 @@ export default function AdminSidebar() {
   return (
     <aside className="sticky top-0 flex h-screen w-16 shrink-0 flex-col border-r border-neutral-200 bg-neutral-900 text-white md:w-60">
       <div className="flex items-center gap-2.5 px-3 py-5 md:px-5">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-neutral-700 text-center text-white">
-          <IconSettings size={18} className="text-white/90" />
-        </span>
+        <img
+          src="/characters/happy.png"
+          alt="管理画面"
+          className="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-white/10"
+        />
         <span className="hidden md:block">
           <span className="block text-[15px] font-semibold tracking-tight">管理画面</span>
           <span className="block text-[11px] text-neutral-400">olive-msystem Admin</span>

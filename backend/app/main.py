@@ -1838,6 +1838,51 @@ def admin_stats(_: dict = Depends(require_admin)):
     }
 
 
+@app.get("/api/admin/overview")
+def admin_overview(_: dict = Depends(require_admin)):
+    """Aggregate statistics split by role: farmers (全農園) vs admin accounts.
+
+    Data analysed under the admin account is kept completely separate so it can
+    never be mistaken for, or included in, a farm's statistics.
+    """
+    roles = {
+        "farmer": {
+            "users": 0, "user_ids": [], "usernames": [], "observation_count": 0,
+            "video_count": 0, "image_count": 0,
+            "states": {"happy": 0, "good": 0, "caution": 0, "danger": 0},
+        },
+        "admin": {
+            "users": 0, "user_ids": [], "usernames": [], "observation_count": 0,
+            "video_count": 0, "image_count": 0,
+            "states": {"happy": 0, "good": 0, "caution": 0, "danger": 0},
+        },
+    }
+    for u in store.list_users():
+        role = u.get("role")
+        if role not in roles:
+            continue
+        r = roles[role]
+        r["users"] += 1
+        r["user_ids"].append(u["id"])
+        r["usernames"].append(u.get("farm_name") or u.get("display_name") or u.get("username"))
+        r["video_count"] += store.count_videos(user_id=u["id"])
+        r["image_count"] += store.count_images(user_id=u["id"])
+        r["observation_count"] += store.count_observations(user_id=u["id"])
+    for o in store.list_observations(limit=1000000):
+        uid = o.get("user_id")
+        if uid is None:
+            continue
+        u = store.get_user(uid)
+        role = u.get("role") if u else None
+        if role not in roles:
+            continue
+        st = health_state(o.get("result") or {})
+        label = st.get("label", "good")
+        if label in roles[role]["states"]:
+            roles[role]["states"][label] += 1
+    return roles
+
+
 @app.get("/api/admin/settings")
 def admin_get_settings(_: dict = Depends(require_admin)):
     return load_settings()

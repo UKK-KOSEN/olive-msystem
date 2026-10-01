@@ -17,6 +17,7 @@ export interface Video {
   created_at: string;
   recorded_at?: string | null;
   status: 'pending' | 'processing' | 'done' | 'error';
+  user_id?: number | null;
 }
 
 export interface HealthState {
@@ -149,6 +150,7 @@ export interface ImageAsset {
   created_at: string;
   recorded_at?: string | null;
   status: 'pending' | 'processing' | 'done' | 'error';
+  user_id?: number | null;
 }
 
 export interface SoilMoistureInput {
@@ -373,6 +375,18 @@ export interface FarmerRecord extends AuthUser {
   states: Record<'happy' | 'good' | 'caution' | 'danger', number>;
   latest_observed_at?: string | null;
 }
+
+export interface AdminOverviewRole {
+  users: number;
+  user_ids: number[];
+  usernames: string[];
+  observation_count: number;
+  video_count: number;
+  image_count: number;
+  states: Record<'happy' | 'good' | 'caution' | 'danger', number>;
+}
+
+export type AdminOverview = Record<'farmer' | 'admin', AdminOverviewRole>;
 
 export interface AuthState {
   token: string;
@@ -819,6 +833,9 @@ export const api = {
   // ---- admin ----
   async adminStats(): Promise<AdminStats> {
     return handle(await get('/api/admin/stats'));
+  },
+  async adminOverview(): Promise<AdminOverview> {
+    return handle(await get('/api/admin/overview'));
   },
   async getSettings(): Promise<{ health_thresholds: HealthThresholds }> {
     return handle(await get('/api/admin/settings'));

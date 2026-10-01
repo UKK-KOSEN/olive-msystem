@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { useSite } from '@/lib/site';
-import { IconOlive } from '@/components/icons';
 
 const nav: { href: string; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
   {
@@ -170,12 +169,11 @@ export default function Sidebar() {
   return (
     <aside className="sticky top-0 flex h-screen w-16 shrink-0 flex-col border-r border-neutral-200 bg-white md:w-60">
       <Link href="/" className="flex items-center gap-2.5 px-3 py-5 md:px-5">
-        <span
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg text-white"
-          style={{ background: site.accent }}
-        >
-          <IconOlive size={20} className="text-white/90" />
-        </span>
+        <img
+          src="/characters/happy.png"
+          alt={site.name}
+          className="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-black/5"
+        />
         <span className="hidden md:block">
           <span className="block text-[15px] font-semibold tracking-tight text-neutral-900">
             {site.name}

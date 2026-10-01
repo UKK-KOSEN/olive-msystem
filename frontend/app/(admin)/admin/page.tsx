@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import {
   api,
   AdminStats,
+  AdminOverview,
+  AdminOverviewRole,
   FarmerRecord,
   HealthThresholds,
   ImageAsset,
@@ -37,6 +39,7 @@ export default function AdminPage() {
   const router = useRouter();
   const siteCtx = useSite();
   const [stats, setStats] = useState<AdminStats | null>(null);
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
   const [images, setImages] = useState<ImageAsset[]>([]);
   const [obs, setObs] = useState<Observation[]>([]);
@@ -45,16 +48,18 @@ export default function AdminPage() {
 
   const loadAll = useCallback(async () => {
     setLoadError(null);
-    const [s, v, i, o] = await Promise.all([
+    const [s, ov, v, i, o] = await Promise.all([
       api.adminStats().catch((e) => {
         setLoadError((prev) => prev ?? (e?.message || 'データの取得に失敗しました'));
         return null;
       }),
+      api.adminOverview().catch(() => null),
       api.videos().catch(() => [] as Video[]),
       api.images().catch(() => [] as ImageAsset[]),
       api.observations().catch(() => [] as Observation[]),
     ]);
     setStats(s);
+    setOverview(ov);
     setVideos(v);
     setImages(i);
     setObs(o);
@@ -139,6 +144,12 @@ if (!stats) {
         </div>
       </section>
 
+      {overview && (
+        <div className="mb-6">
+          <OverviewSection overview={overview} />
+        </div>
+      )}
+
       <div className="mb-6">
         <FarmersOverviewSection obs={obs} />
       </div>
@@ -171,6 +182,7 @@ if (!stats) {
           videos={videos}
           images={images}
           obs={obs}
+          adminUserIds={overview?.admin.user_ids ?? []}
           onChanged={loadAll}
           flash={(m) => flash(m.kind, m.text)}
         />
@@ -198,6 +210,95 @@ function Info({ label, value }: { label: string; value: string }) {
       <p className="text-xs text-neutral-400">{label}</p>
       <p className="mt-0.5 font-medium tabular-nums text-neutral-800">{value}</p>
     </div>
+  );
+}
+
+function OverviewSection({ overview }: { overview: AdminOverview }) {
+  const f = overview.farmer;
+  const a = overview.admin;
+
+  return (
+    <section className="card">
+      <div className="mb-4">
+        <h2 className="label">統計（全農園・管理者別）</h2>
+        <p className="mt-1 text-xs text-neutral-400">
+          管理者アカウントが解析したデータは農園の統計とは別に集計されます（農園に加算されません）。
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="rounded-xl border border-neutral-100 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-neutral-800">全農園の統計</h3>
+            <span className="badge bg-neutral-100 text-neutral-600">{f.users}農園</span>
+          </div>
+          <RoleStats role={f} />
+        </div>
+
+        <div className="rounded-xl bg-health-caution/5 p-4 ring-1 ring-inset ring-health-caution/20">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-neutral-800">管理者アカウントのデータ</h3>
+            <span className="badge bg-health-caution/10 text-health-caution">農園とは別管理</span>
+          </div>
+          <p className="mb-3 text-xs text-neutral-500">
+            {a.usernames.length ? a.usernames.join('・') : '管理者'} アカウントが解析したデータです。
+          </p>
+          <RoleStats role={a} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RoleStats({ role }: { role: AdminOverviewRole }) {
+  const total = role.states.happy + role.states.good + role.states.caution + role.states.danger;
+  const maxSeg = Math.max(1, ...STATE_ORDER.map((k) => role.states[k] || 0));
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-lg bg-neutral-50 px-2 py-1.5">
+          <p className="stat-value text-sm">{role.observation_count}</p>
+          <p className="text-[10px] text-neutral-400">観測</p>
+        </div>
+        <div className="rounded-lg bg-neutral-50 px-2 py-1.5">
+          <p className="stat-value text-sm">{role.video_count}</p>
+          <p className="text-[10px] text-neutral-400">動画</p>
+        </div>
+        <div className="rounded-lg bg-neutral-50 px-2 py-1.5">
+          <p className="stat-value text-sm">{role.image_count}</p>
+          <p className="text-[10px] text-neutral-400">画像</p>
+        </div>
+      </div>
+
+      {total > 0 ? (
+        <div className="mt-3">
+          <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-neutral-100">
+            {STATE_ORDER.map((k) => {
+              const n = role.states?.[k] || 0;
+              if (!n) return null;
+              return (
+                <span
+                  key={k}
+                  style={{
+                    width: `${(n / maxSeg) * 100}%`,
+                    background: healthColor(k),
+                  }}
+                />
+              );
+            })}
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-neutral-500">
+            {STATE_ORDER.map((k) => (
+              <span key={k}>
+                {healthJa(k)} {role.states?.[k] || 0}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-neutral-400">観測データがまだありません。</p>
+      )}
+    </>
   );
 }
 
@@ -974,18 +1075,33 @@ function DataSection({
   videos,
   images,
   obs,
+  adminUserIds,
   onChanged,
   flash,
 }: {
   videos: Video[];
   images: ImageAsset[];
   obs: Observation[];
+  adminUserIds: number[];
   onChanged: () => void;
   flash: (m: { kind: 'ok' | 'err'; text: string }) => void;
 }) {
 const [confirmClear, setConfirmClear] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
+  const [scope, setScope] = useState<'all' | 'farmers' | 'admin'>('all');
+
+  const isAdminOwned = (uid: number | null | undefined) => uid != null && adminUserIds.includes(uid);
+  const inScope = (uid: number | null | undefined) =>
+    scope === 'all'
+      ? true
+      : scope === 'admin'
+        ? isAdminOwned(uid)
+        : uid != null && !isAdminOwned(uid);
+
+  const scopedVideos = videos.filter((v) => inScope(v.user_id ?? null));
+  const scopedImages = images.filter((im) => inScope(im.user_id ?? null));
+  const scopedObs = obs.filter((o) => inScope(o.user_id ?? null));
 
   const clean = async () => {
     setBusy('clear');
@@ -1043,7 +1159,30 @@ const [confirmClear, setConfirmClear] = useState(false);
   return (
     <section className="card">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="label">データ管理</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="label">データ管理</h2>
+          <div className="flex overflow-hidden rounded-lg border border-neutral-200 text-xs">
+            {(
+              [
+                ['all', '全データ'],
+                ['farmers', '農家のみ'],
+                ['admin', '管理者のみ'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setScope(key)}
+                className={`px-2.5 py-1 transition-colors ${
+                  scope === key
+                    ? 'bg-neutral-800 text-white'
+                    : 'bg-white text-neutral-600 hover:bg-neutral-50'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {confirmClear ? (
           <div className="flex items-center gap-2">
             <span className="text-xs text-health-danger">全観測データを削除します。よろしいですか？</span>
@@ -1058,13 +1197,20 @@ const [confirmClear, setConfirmClear] = useState(false);
           </button>
         )}
       </div>
+      <p className="mb-1 text-[11px] text-neutral-400">
+        {scope === 'all'
+          ? '全アカウントのデータを表示します（農家・管理者をまとめて確認できます）。'
+          : scope === 'admin'
+            ? '管理者アカウントがアップロード・解析したデータのみ表示します。'
+            : '農家アカウントのデータのみ表示します。'}
+      </p>
 
-      <h3 className="label mb-2 mt-4 text-sm">動画（{videos.length}）</h3>
-      {videos.length === 0 ? (
+      <h3 className="label mb-2 mt-4 text-sm">動画（{scopedVideos.length}）</h3>
+      {scopedVideos.length === 0 ? (
         <p className="text-sm text-neutral-400">動画なし</p>
       ) : (
         <ul className="divide-y divide-neutral-100">
-{videos.map((v) => {
+{scopedVideos.map((v) => {
             const poster = obs.find((o) => o.video_id === v.id && o.annotated_path)?.annotated_path ?? null;
             return (
             <li key={v.id} className="py-2">
@@ -1097,12 +1243,12 @@ const [confirmClear, setConfirmClear] = useState(false);
         </ul>
       )}
 
-      <h3 className="label mb-2 mt-4 text-sm">画像（{images.length}）</h3>
-      {images.length === 0 ? (
+      <h3 className="label mb-2 mt-4 text-sm">画像（{scopedImages.length}）</h3>
+      {scopedImages.length === 0 ? (
         <p className="text-sm text-neutral-400">画像なし</p>
       ) : (
         <ul className="divide-y divide-neutral-100">
-          {images.map((im) => (
+          {scopedImages.map((im) => (
             <li key={im.id} className="flex items-center gap-3 py-2">
               <span className="min-w-0 flex-1 truncate text-sm text-neutral-700">{im.filename}</span>
               <span className="text-xs text-neutral-400">{fmtBytes(im.size_bytes)}</span>
@@ -1114,8 +1260,8 @@ const [confirmClear, setConfirmClear] = useState(false);
         </ul>
       )}
 
-      <h3 className="label mb-2 mt-4 text-sm">観測データ（{obs.length}）</h3>
-      {obs.length === 0 ? (
+      <h3 className="label mb-2 mt-4 text-sm">観測データ（{scopedObs.length}）</h3>
+      {scopedObs.length === 0 ? (
         <p className="text-sm text-neutral-400">観測データなし</p>
       ) : (
         <div className="max-h-80 overflow-y-auto">
@@ -1130,14 +1276,21 @@ const [confirmClear, setConfirmClear] = useState(false);
               </tr>
             </thead>
             <tbody>
-              {obs.map((o) => {
+              {scopedObs.map((o) => {
                 const st = o.health_state;
+                const isAdmin = isAdminOwned(o.user_id ?? null);
                 return (
                   <tr key={o.id} className="border-t border-neutral-100">
                     <td className="py-2 pr-3 tabular-nums text-neutral-500">{o.id}</td>
                     <td className="py-2 pr-3 text-neutral-700">{o.filename || '画像/動画'}</td>
                     <td className="py-2 pr-3 text-neutral-600">
-                      {o.owner ? farmerLabel(o.owner) : '—'}
+                      {isAdmin ? (
+                        <span className="badge bg-health-caution/10 text-health-caution">管理者</span>
+                      ) : o.owner ? (
+                        farmerLabel(o.owner)
+                      ) : (
+                        '—'
+                      )}
                     </td>
                     <td className="py-2 pr-3">
                       {st ? (
@@ -1192,7 +1345,7 @@ function FarmersOverviewSection({ obs }: { obs: Observation[] }) {
         <div>
           <h2 className="label">農家別データ集計</h2>
           <p className="mt-1 text-xs text-neutral-400">
-            全農家のデータ量と体調判定の分布をまとめて確認できます。
+            全農家のデータ量と体調判定の分布をまとめて確認できます（管理者アカウントのデータは含みません）。
           </p>
         </div>
         {!loading && (
@@ -1212,7 +1365,6 @@ function FarmersOverviewSection({ obs }: { obs: Observation[] }) {
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {farmers.map((f) => {
-            const total = f.observation_count || 0;
             const maxSeg = Math.max(1, ...STATE_ORDER.map((k) => f.states?.[k] || 0));
             return (
               <div key={f.id} className="rounded-lg border border-neutral-100 p-3.5">
