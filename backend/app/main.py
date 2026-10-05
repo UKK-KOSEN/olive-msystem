@@ -232,6 +232,19 @@ def health_ready():
     return payload
 
 
+@app.get("/api/health/upload")
+def health_upload(user: dict = Depends(require_admin)):
+    """Diagnose the media upload path stage by stage.
+
+    Reports which resource (disk, spool dir, database, ffprobe, OpenCV,
+    registration) is failing so a 500 can be acted on without reading logs.
+    """
+    from .upload_diagnostics import diagnose_upload
+
+    result = diagnose_upload(user=user)
+    return result
+
+
 # ---- Sensor anomaly monitor (background thread) ---------------------------
 import threading
 from datetime import datetime as _dt, timezone as _tz
@@ -876,11 +889,13 @@ async def upload_video(file: UploadFile = File(...),
             lambda: store.add_video(safe_name, str(dest), size, user_id=user["id"],
                                     recorded_at=recorded_at),
             name=safe_name)
-    except Exception:
+    except Exception as exc:
         _discard_partial_upload(dest)
         logger.exception("failed to register video %s (%d bytes)", safe_name, size)
         raise app_error(500, "SERVER_UPLOAD_SAVE",
-                        "動画を登録できませんでした。時間をおいて再度お試しください。")
+                        "動画を登録できませんでした。時間をおいて再度お試しください。",
+                        reason=f"{type(exc).__name__}: {exc}",
+                        diagnose="/api/health/upload")
 
     # Try to read metadata (duration etc.).
     try:
@@ -976,11 +991,13 @@ async def upload_image(file: UploadFile = File(...),
             lambda: store.add_image(safe_name, str(dest), size, user_id=user["id"],
                                     recorded_at=recorded_at),
             name=safe_name)
-    except Exception:
+    except Exception as exc:
         _discard_partial_upload(dest)
         logger.exception("failed to register image %s (%d bytes)", safe_name, size)
         raise app_error(500, "SERVER_UPLOAD_SAVE",
-                        "画像を登録できませんでした。時間をおいて再度お試しください。")
+                        "画像を登録できませんでした。時間をおいて再度お試しください。",
+                        reason=f"{type(exc).__name__}: {exc}",
+                        diagnose="/api/health/upload")
 
     return {"id": image_id, "filename": safe_name, "storage_path": str(dest),
             "recorded_at": recorded_at}
