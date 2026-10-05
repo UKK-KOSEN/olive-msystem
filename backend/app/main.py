@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import sqlite3
 import time
 import traceback
 import uvicorn
@@ -785,8 +786,58 @@ def _save_upload(file: UploadFile, dest: Path) -> int:
                     raise app_error(413, "LIMIT_UPLOAD_TOO_LARGE", "file too large")
                 out.write(chunk)
     except OSError as exc:
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise app_error(500, "SERVER_UPLOAD_WRITE", f"upload failed: {exc}")
     return size
+
+
+def _discard_partial_upload(dest: Path) -> None:
+    """Remove a just-written upload so a failed request leaves no orphan."""
+    try:
+        dest.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("could not remove orphaned upload %s", dest, exc_info=True)
+
+
+def _write_upload_bytes(content: bytes, dest: Path) -> int:
+    """Persist an already-buffered upload body.
+
+    Used where the handler had to read the body up front (size check). Passing
+    that buffer on avoids re-reading ``file.file``, which is already at EOF and
+    would silently persist an empty file.
+    """
+    try:
+        with dest.open("wb") as out:
+            out.write(content)
+    except OSError as exc:
+        _discard_partial_upload(dest)
+        raise app_error(500, "SERVER_UPLOAD_WRITE", f"upload failed: {exc}")
+    return len(content)
+
+
+def _add_media_row(add, *, name: str, attempts: int = 3):
+    """Insert an upload row, retrying transient SQLite lock contention.
+
+    The analysis runner writes to the same database from worker threads while
+    uploads arrive, so "database is locked" is a real (if transient) failure.
+    Left unhandled it surfaced as an opaque 500 on the upload request.
+    """
+    delay = 0.25
+    for attempt in range(1, attempts + 1):
+        try:
+            return add()
+        except sqlite3.OperationalError as exc:
+            msg = str(exc).lower()
+            if ("locked" not in msg and "busy" not in msg) or attempt == attempts:
+                raise
+            logger.warning("sqlite busy inserting %s (attempt %d/%d): %s",
+                           name, attempt, attempts, exc)
+            time.sleep(delay)
+            delay *= 2
+    raise AssertionError("unreachable")
 
 
 @app.post("/api/videos")
@@ -812,9 +863,25 @@ async def upload_video(file: UploadFile = File(...),
         counter += 1
     size = _save_upload(file, dest)
 
-    recorded_at = parse_captured_candidate(captured_at) or extract_captured_at(dest)
-    video_id = store.add_video(safe_name, str(dest), size, user_id=user["id"],
-                               recorded_at=recorded_at)
+    # Past this point the file is already on disk, so a failure must clean up
+    # after itself and name the step that broke instead of returning a bare 500.
+    try:
+        recorded_at = parse_captured_candidate(captured_at) or extract_captured_at(dest)
+    except Exception:
+        logger.exception("capture-time extraction failed for %s", safe_name)
+        recorded_at = None
+
+    try:
+        video_id = _add_media_row(
+            lambda: store.add_video(safe_name, str(dest), size, user_id=user["id"],
+                                    recorded_at=recorded_at),
+            name=safe_name)
+    except Exception:
+        _discard_partial_upload(dest)
+        logger.exception("failed to register video %s (%d bytes)", safe_name, size)
+        raise app_error(500, "SERVER_UPLOAD_SAVE",
+                        "動画を登録できませんでした。時間をおいて再度お試しください。")
+
     # Try to read metadata (duration etc.).
     try:
         info = get_grader().video_info(str(dest))
@@ -896,11 +963,25 @@ async def upload_image(file: UploadFile = File(...),
     while dest.exists():
         dest = UPLOAD_DIR / f"{Path(file.filename).stem}_{counter}{dest.suffix}"
         counter += 1
-    size = _save_upload(file, dest)
+    size = _write_upload_bytes(content, dest)
 
-    recorded_at = parse_captured_candidate(captured_at) or extract_captured_at(dest)
-    image_id = store.add_image(safe_name, str(dest), size, user_id=user["id"],
-                               recorded_at=recorded_at)
+    try:
+        recorded_at = parse_captured_candidate(captured_at) or extract_captured_at(dest)
+    except Exception:
+        logger.exception("capture-time extraction failed for %s", safe_name)
+        recorded_at = None
+
+    try:
+        image_id = _add_media_row(
+            lambda: store.add_image(safe_name, str(dest), size, user_id=user["id"],
+                                    recorded_at=recorded_at),
+            name=safe_name)
+    except Exception:
+        _discard_partial_upload(dest)
+        logger.exception("failed to register image %s (%d bytes)", safe_name, size)
+        raise app_error(500, "SERVER_UPLOAD_SAVE",
+                        "画像を登録できませんでした。時間をおいて再度お試しください。")
+
     return {"id": image_id, "filename": safe_name, "storage_path": str(dest),
             "recorded_at": recorded_at}
 
