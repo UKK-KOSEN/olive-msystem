@@ -38,16 +38,26 @@ def parse_captured_candidate(value) -> Optional[str]:
 
 
 def extract_captured_at(path) -> Optional[str]:
-    """Try to read the capture time embedded in the media file itself."""
+    """Try to read the capture time embedded in the media file itself.
+
+    Strictly best-effort: always returns ``None`` rather than raising, since
+    callers use this to enrich an upload that has already been saved. Metadata
+    is attacker-controlled and platform-dependent (external binaries, container
+    tags, odd encodings), so an unexpected exception here must not turn a
+    successful upload into a 500.
+    """
     p = Path(path)
-    if not p.exists() or p.stat().st_size == 0:
+    try:
+        if not p.exists() or p.stat().st_size == 0:
+            return None
+        ext = p.suffix.lower()
+        if ext in {".jpg", ".jpeg", ".tif", ".tiff"}:
+            return _jpeg_exif_datetime(p)
+        if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}:
+            return _ffprobe_creation_time(p)
         return None
-    ext = p.suffix.lower()
-    if ext in {".jpg", ".jpeg", ".tif", ".tiff"}:
-        return _jpeg_exif_datetime(p)
-    if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}:
-        return _ffprobe_creation_time(p)
-    return None
+    except Exception:
+        return None
 
 
 def _jpeg_exif_datetime(path: Path) -> Optional[str]:
@@ -142,6 +152,18 @@ def _format_exif(value: str) -> str:
 
 
 def _ffprobe_creation_time(path: Path) -> Optional[str]:
+    """Best-effort ``creation_time`` read via ffprobe. Never raises.
+
+    Capture time is optional metadata, so any failure must degrade to ``None``
+    rather than propagate: this runs unguarded inside the upload endpoints,
+    where an exception would abort an otherwise successful upload with a 500.
+
+    Output is decoded with ``errors="replace"`` because ffprobe echoes container
+    tags and the source path verbatim. A file whose metadata or name is not
+    valid in the process locale encoding makes ``text=True`` raise
+    ``UnicodeDecodeError`` (a ``ValueError``, not an ``OSError``), which is
+    exactly the kind of failure that must not escape here.
+    """
     if not shutil.which("ffprobe"):
         return None
     try:
@@ -149,8 +171,9 @@ def _ffprobe_creation_time(path: Path) -> Optional[str]:
             ["ffprobe", "-v", "error", "-show_entries",
              "format_tags=creation_time", "-of", "default=noprint_wrappers=1:nokey=1",
              str(path)],
-            capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
     text = (proc.stdout or "").strip()
     if not text:
