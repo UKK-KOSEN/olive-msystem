@@ -305,22 +305,41 @@ def _seed_admin() -> None:
 def _seed_admin_inner() -> None:
     import os
     import secrets
-    if os.environ.get("ADMIN_PASSWORD"):
+    from pathlib import Path
+    env_pw = os.environ.get("ADMIN_PASSWORD")
+    if env_pw:
         logger.info("admin password managed via ADMIN_PASSWORD env (not randomized)")
+        username = os.environ.get("ADMIN_USERNAME", "admin")
+        try:
+            cred_path = Path("logs") / "admin-credentials.txt"
+            cred_path.parent.mkdir(exist_ok=True)
+            cred_path.write_text(f"username={username}\npassword={env_pw}\nsourced=env\n", encoding="utf-8")
+        except Exception as e:
+            logger.warning("failed to write admin credentials file: %s", e)
         return
     username = os.environ.get("ADMIN_USERNAME", "admin")
     existing = store.get_user_by_username(username)
     if existing is not None and existing["role"] != "admin":
         return
+    from pathlib import Path
     password = "".join(secrets.choice("0123456789") for _ in range(10))
     if existing is None:
         store.create_user(username, password, role="admin", display_name="管理者")
+        created = True
     else:
         if not verify_password("admin123", existing["password_hash"]):
             return
         store.set_user_password(existing["id"], password)
         logger.info("Rotated admin '%s' away from the default password admin123", username)
-    logger.info("Created default admin account: username=%s password=%s", username, password)
+        created = False
+    if created:
+        logger.info("Created default admin account: username=%s password=%s", username, password)
+    try:
+        cred_path = Path("logs") / "admin-credentials.txt"
+        cred_path.parent.mkdir(exist_ok=True)
+        cred_path.write_text(f"username={username}\npassword={password}\ntimestamp={_dt.now().astimezone().isoformat()}\n", encoding="utf-8")
+    except Exception as e:
+        logger.warning("failed to write admin credentials file: %s", e)
 
 
 if IS_ACTIVE:
