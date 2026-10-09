@@ -42,7 +42,7 @@ echo [watchdog] Starting backend (uvicorn on %PORT%) [attempt !ATTEMPT!]...
 for /f %%i in ('powershell -NoProfile -Command "[uint64]((Get-Date).ToFileTimeUtc())"') do set START_MS=%%i
 if not exist logs mkdir logs
 pushd backend
-.venv\Scripts\python.exe -m uvicorn app.main:app --host %BACKEND_HOST% --port %PORT% >> ..\logs\backend-uvicorn.log 2>&1
+.venv\Scripts\python.exe -m uvicorn app.main:app --host %BACKEND_HOST% --port %PORT% 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath ..\logs\backend-uvicorn.log"
 set EXIT=%errorlevel%
 popd
 
