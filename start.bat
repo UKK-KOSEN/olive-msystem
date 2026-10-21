@@ -1,4 +1,5 @@
 ﻿@echo off
+chcp 65001 >nul
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
@@ -261,9 +262,9 @@ if "%~1"=="backend" goto :run_backend
 if "%~1"=="frontend" goto :run_frontend
 
 echo [START] Backend watchdog ...
-start "olive-backend-watchdog" cmd /k "cd /d %~dp0 && run_backend.bat"
+start "olive-backend-watchdog" cmd /k "cd /d %~dp0 && start_backend_watchdog.bat"
 echo [START] Frontend watchdog ...
-start "olive-frontend-watchdog" cmd /k "cd /d %~dp0 && run_frontend.bat"
+start "olive-frontend-watchdog" cmd /k "cd /d %~dp0 && start_frontend_watchdog.bat"
 
 echo.
 echo Open http://localhost:%FRONTEND_PORT% in your browser.
@@ -463,4 +464,5 @@ cd /d "%~dp0frontend"
 set BACKEND_URL=%BACKEND_URL%
 call npm run start -- -p %FRONTEND_PORT%
 exit /b 0
+
 
