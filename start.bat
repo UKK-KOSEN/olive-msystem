@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
@@ -70,73 +70,137 @@ if "!NEED_INSTALL!"=="1" (
   if errorlevel 1 (
     winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
     if errorlevel 1 goto :err_tools
-  )
-  where py >nul 2>&1
-  if errorlevel 1 (
-    where python >nul 2>&1
-    if errorlevel 1 (
-      winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
-      if errorlevel 1 goto :err_tools
-    )
-  )
-  where node >nul 2>&1
-  if errorlevel 1 (
-    winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
-    if errorlevel 1 goto :err_tools
-  )
-  where npm >nul 2>&1
-  if errorlevel 1 (
-    winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
-    if errorlevel 1 goto :err_tools
-  )
-  where ffmpeg >nul 2>&1
-  if errorlevel 1 (
-    winget install --id Gyan.FFmpeg -e --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
-    if errorlevel 1 goto :err_tools
-  )
+echo [ERROR E001] Required tools installation failed / 必要なツールのインストールに失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   Git / Python / Node.js / ffmpeg のいずれかのインストールに失敗しました。
+echo   Installation of Git / Python / Node.js / ffmpeg failed.
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - winget が利用できない / winget is not available
+echo   - ネットワーク接続の問題 / Network connection issue
+echo   - パッケージソースへのアクセス制限 / Package source access restricted
+echo.
+echo [ACTION / 対処方法]
+echo   1. 手動で必要なツールをインストールしてください / Install required tools manually:
+echo      - Git for Windows : https://git-scm.com/download/win
+echo      - Python 3.12     : https://www.python.org/downloads/
+echo      - Node.js LTS     : https://nodejs.org/
+echo      - ffmpeg           : https://www.gyan.dev/ffmpeg/builds/ or winget ffmpeg
+echo   2. PATH に追加後、新しいコマンドプロンプトで start.bat を再実行してください
+echo      After adding to PATH, open a NEW Command Prompt and re-run start.bat
+echo   3. それでも解決しない場合は start.bat check で環境を診断してください
+echo      If still failing, run "start.bat check" to diagnose the environment
+echo.
+pause
+exit /b 1
 
-  rem --- refresh PATH from registry (system + user) for this session ---
-  for /F "skip=2 tokens=2,*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYS_PATH=%%B"
-  for /F "skip=2 tokens=2,*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USER_PATH=%%B"
-  set "PATH=%SYS_PATH%;%USER_PATH%;%SystemRoot%\System32;%SystemRoot%"
+:err_venv
+echo.
+echo [ERROR E002] Python venv creation/installation failed / Python仮想環境の作成・セットアップに失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   backend\.venv の作成または依存パッケージのインストールに失敗しました。
+echo   Failed to create backend\.venv or install backend dependencies.
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - pip / setuptools / wheel の破損 / Broken pip/setuptools/wheel
+echo   - requirements.txt の依存関係競合 / Dependency conflicts in requirements.txt
+echo   - ディスク容量不足 / Insufficient disk space
+echo   - プロキシ/ファイアウォールによる制限 / Proxy/firewall restrictions
+echo.
+echo [ACTION / 対処方法]
+echo   1. ログを確認してください / Check logs: backend\logs or terminal output above
+echo   2. 仮想環境を削除して再試行してください / Remove venv and retry:
+echo      rmdir /s /q backend\.venv
+echo      start.bat
+echo   3. pip を更新して再試行してください / Upgrade pip and retry:
+echo      backend\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+echo      backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+echo.
+pause
+exit /b 1
 
-  echo.
-  echo [SETUP] Verifying installed tools...
-  where git >nul 2>&1
-  if errorlevel 1 goto :err_tools2
-  where py >nul 2>&1
-  if errorlevel 1 (
-    where python >nul 2>&1
-    if errorlevel 1 goto :err_tools2
-  )
-  where node >nul 2>&1
-  if errorlevel 1 goto :err_tools2
-  where npm >nul 2>&1
-  if errorlevel 1 goto :err_tools2
-  where ffmpeg >nul 2>&1
-  if errorlevel 1 goto :err_tools2
-  echo [OK]   Prerequisites installed and ready.
-)
+:err_olivep
+echo.
+echo [ERROR E003] Failed to clone olive-p detection engine / olive-p検出エンジンのクローンに失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   external\olive-p へのクローンに失敗しました。
+echo   Failed to clone the olive-p detection engine into external\olive-p
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - ネットワーク接続 / Network issue
+echo   - Git認証・権限 / Git auth/permission issue
+echo   - リポジトリアクセス制限 / Repository access restricted
+echo.
+echo [ACTION / 対処方法]
+echo   1. 既存の olive-p を指定してください / Use existing olive-p:
+echo      set OLIVE_P_DIR=C:\path\to\olive-p
+echo      start.bat
+echo   2. 手動でクローンしてください / Clone manually:
+echo      git clone <olive-p-repo-url> external\olive-p
+echo   3. ネットワーク/プロキシ設定を確認してください / Check network/proxy settings
+echo.
+pause
+exit /b 1
 
-rem ---- 1. detection engine (olive-p) source ----
-rem    Prefer an explicit OLIVE_P_DIR; otherwise use an existing checkout
-rem    (bundled external\olive-p or the legacy well-known path). Only when
-rem    nothing exists do we clone from GitHub so a fresh machine boots fully
-rem    self-contained.
-if defined OLIVE_P_DIR (
-  echo [OK]   OLIVE_P_DIR set: %OLIVE_P_DIR%
-) else if exist "%EXTERNAL_OLIVE_P%\src\runtime.py" (
-  echo [OK]   Detection engine found: %EXTERNAL_OLIVE_P%
-) else if exist "%USERPROFILE%\Downloads\olive-p\src\runtime.py" (
-  echo [OK]   Detection engine found ^(existing checkout^): %USERPROFILE%\Downloads\olive-p
-) else (
-  echo [SETUP] olive-p not found under external\olive-p. Fetching detection engine...
-  git --version >nul 2>&1
-  if errorlevel 1 goto :err_git
-  if not exist "external" mkdir external
-  echo [SETUP] git clone https://github.com/UKK-KOSEN/olive-vision-ai.git ^(olive-p^) ...
-  git clone --depth 1 https://github.com/UKK-KOSEN/olive-vision-ai.git "%EXTERNAL_OLIVE_P%"
-  if errorlevel 1 goto :err_olivep
+:err_npm
+echo.
+echo [ERROR E004] npm install failed / npm install に失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   frontend\node_modules のインストールに失敗しました。
+echo   Failed to install frontend dependencies via npm install.
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - node_modules の破損 / Corrupted node_modules
+echo   - package-lock.json 不整合 / package-lock.json mismatch
+echo   - npm キャッシュ不良 / Corrupted npm cache
+echo   - ネットワーク/レジストリアクセス制限 / Registry/network restrictions
+echo.
+echo [ACTION / 対処方法]
+echo   1. クリーンインストールを試行してください / Try clean install:
+echo      cd frontend
+echo      rmdir /s /q node_modules
+echo      del package-lock.json (必要な場合のみ / if needed)
+echo      npm install
+echo   2. npm キャッシュをクリアしてください / Clear npm cache:
+echo      npm cache verify
+echo      npm cache clean --force (古いnpmの場合 / older npm)
+echo   3. ネットワーク設定を確認してください / Check proxy/npm config (npm config get proxy/https-proxy)
+echo.
+pause
+exit /b 1
+
+:err_build
+echo.
+echo [ERROR E005] Frontend build failed / フロントエンドビルドに失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   npm run build に失敗しました。Next.js アプリのビルドが完了できません。
+echo   Next.js build failed. Cannot complete frontend build.
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - TypeScript/ESLint エラー / TypeScript/ESLint errors
+echo   - 依存関係の不整合 / Dependency mismatch
+echo   - 環境変数不足 / Missing environment variables
+echo   - メモリ不足 / Out of memory
+echo.
+echo [ACTION / 対処方法]
+echo   1. 上記のエラーログを確認して修正してください / Review errors above and fix them
+echo   2. 開発モードで動作確認してください / Test in dev mode:
+echo      cd frontend ^&^& npm run dev
+echo   3. キャッシュをクリアして再ビルドしてください / Clear Next cache and rebuild:
+echo      cd frontend ^&^& rmdir /s /q .next
+echo      npm run build
+echo   4. それでも解決しない場合は node_modules を再インストールしてください
+echo      Reinstall node_modules if still failing
+echo.
+pause
+exit /b 1
+
+:err_olivep
   echo [OK]   Detection engine cloned: %EXTERNAL_OLIVE_P%
 )
 
@@ -233,18 +297,133 @@ pause
 exit /b 1
 
 :err_tools
+echo [ERROR E001] Required tools installation failed / 必要なツールのインストールに失敗しました
 echo.
-echo [ERROR] winget failed to install one or more prerequisite tools
-echo         (git / python / node / ffmpeg). Try installing them manually and
-echo         re-run start.bat, or set OLIVE_P_DIR to an existing olive-p.
+echo [DESCRIPTION / 説明]
+echo   Git / Python / Node.js / ffmpeg のいずれかのインストールに失敗しました。
+echo   Installation of Git / Python / Node.js / ffmpeg failed.
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - winget が利用できない / winget is not available
+echo   - ネットワーク接続の問題 / Network connection issue
+echo   - パッケージソースへのアクセス制限 / Package source access restricted
+echo.
+echo [ACTION / 対処方法]
+echo   1. 手動で必要なツールをインストールしてください / Install required tools manually:
+echo      - Git for Windows : https://git-scm.com/download/win
+echo      - Python 3.12     : https://www.python.org/downloads/
+echo      - Node.js LTS     : https://nodejs.org/
+echo      - ffmpeg           : https://www.gyan.dev/ffmpeg/builds/ or winget ffmpeg
+echo   2. PATH に追加後、新しいコマンドプロンプトで start.bat を再実行してください
+echo      After adding to PATH, open a NEW Command Prompt and re-run start.bat
+echo   3. それでも解決しない場合は start.bat check で環境を診断してください
+echo      If still failing, run "start.bat check" to diagnose the environment
+echo.
 pause
 exit /b 1
 
-:err_tools2
+:err_venv
 echo.
-echo [ERROR] Prerequisites were installed but could not be found on PATH.
-echo         Close this window, open a NEW Command Prompt and re-run start.bat
-echo         (the new tools need a fresh shell to appear in PATH).
+echo [ERROR E002] Python venv creation/installation failed / Python仮想環境の作成・セットアップに失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   backend\.venv の作成または依存パッケージのインストールに失敗しました。
+echo   Failed to create backend\.venv or install backend dependencies.
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - pip / setuptools / wheel の破損 / Broken pip/setuptools/wheel
+echo   - requirements.txt の依存関係競合 / Dependency conflicts in requirements.txt
+echo   - ディスク容量不足 / Insufficient disk space
+echo   - プロキシ/ファイアウォールによる制限 / Proxy/firewall restrictions
+echo.
+echo [ACTION / 対処方法]
+echo   1. ログを確認してください / Check logs: backend\logs or terminal output above
+echo   2. 仮想環境を削除して再試行してください / Remove venv and retry:
+echo      rmdir /s /q backend\.venv
+echo      start.bat
+echo   3. pip を更新して再試行してください / Upgrade pip and retry:
+echo      backend\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+echo      backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+echo.
+pause
+exit /b 1
+
+:err_olivep
+echo.
+echo [ERROR E003] Failed to clone olive-p detection engine / olive-p検出エンジンのクローンに失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   external\olive-p へのクローンに失敗しました。
+echo   Failed to clone the olive-p detection engine into external\olive-p
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - ネットワーク接続 / Network issue
+echo   - Git認証・権限 / Git auth/permission issue
+echo   - リポジトリアクセス制限 / Repository access restricted
+echo.
+echo [ACTION / 対処方法]
+echo   1. 既存の olive-p を指定してください / Use existing olive-p:
+echo      set OLIVE_P_DIR=C:\path\to\olive-p
+echo      start.bat
+echo   2. 手動でクローンしてください / Clone manually:
+echo      git clone <olive-p-repo-url> external\olive-p
+echo   3. ネットワーク/プロキシ設定を確認してください / Check network/proxy settings
+echo.
+pause
+exit /b 1
+
+:err_npm
+echo.
+echo [ERROR E004] npm install failed / npm install に失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   frontend\node_modules のインストールに失敗しました。
+echo   Failed to install frontend dependencies via npm install.
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - node_modules の破損 / Corrupted node_modules
+echo   - package-lock.json 不整合 / package-lock.json mismatch
+echo   - npm キャッシュ不良 / Corrupted npm cache
+echo   - ネットワーク/レジストリアクセス制限 / Registry/network restrictions
+echo.
+echo [ACTION / 対処方法]
+echo   1. クリーンインストールを試行してください / Try clean install:
+echo      cd frontend
+echo      rmdir /s /q node_modules
+echo      del package-lock.json (必要な場合のみ / if needed)
+echo      npm install
+echo   2. npm キャッシュをクリアしてください / Clear npm cache:
+echo      npm cache verify
+echo      npm cache clean --force (古いnpmの場合 / older npm)
+echo   3. ネットワーク設定を確認してください / Check proxy/npm config (npm config get proxy/https-proxy)
+echo.
+pause
+exit /b 1
+
+:err_build
+echo.
+echo [ERROR E005] Frontend build failed / フロントエンドビルドに失敗しました
+echo.
+echo [DESCRIPTION / 説明]
+echo   npm run build に失敗しました。Next.js アプリのビルドが完了できません。
+echo   Next.js build failed. Cannot complete frontend build.
+echo.
+echo [CAUSE / 考えられる原因]
+echo   - TypeScript/ESLint エラー / TypeScript/ESLint errors
+echo   - 依存関係の不整合 / Dependency mismatch
+echo   - 環境変数不足 / Missing environment variables
+echo   - メモリ不足 / Out of memory
+echo.
+echo [ACTION / 対処方法]
+echo   1. 上記のエラーログを確認して修正してください / Review errors above and fix them
+echo   2. 開発モードで動作確認してください / Test in dev mode:
+echo      cd frontend ^&^& npm run dev
+echo   3. キャッシュをクリアして再ビルドしてください / Clear Next cache and rebuild:
+echo      cd frontend ^&^& rmdir /s /q .next
+echo      npm run build
+echo   4. それでも解決しない場合は node_modules を再インストールしてください
+echo      Reinstall node_modules if still failing
+echo.
 pause
 exit /b 1
 
@@ -284,3 +463,4 @@ cd /d "%~dp0frontend"
 set BACKEND_URL=%BACKEND_URL%
 call npm run start -- -p %FRONTEND_PORT%
 exit /b 0
+
