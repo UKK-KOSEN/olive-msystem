@@ -9,7 +9,11 @@
     "lint": "eslint ."
   },
   "dependencies": {
+<<<<<<< HEAD
     "next": "15.5.28",
+=======
+    "next": "15.5.27",
+>>>>>>> 3d8a554db951c77acb9dfd75038bbf9e876df24f
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
